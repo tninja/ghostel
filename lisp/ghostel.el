@@ -1209,10 +1209,13 @@ is non-nil.")
                         (let ((code (- c 96)))
                           (lambda () (interactive)
                             (ghostel--send-string (string code)))))))))
-    ;; Meta keys — bind all M-<letter> so they reach the terminal
-    ;; instead of running Emacs commands like forward-word.
+    ;; Meta and Control-Meta keys - bind all (C-)M-<letter> so they reach
+    ;; the terminal instead of running Emacs commands like forward-word.
     (dolist (c (number-sequence ?a ?z))
       (let ((key-str (format "M-%c" c)))
+        (unless (member key-str ghostel-keymap-exceptions)
+          (define-key map (kbd key-str) #'ghostel--send-event)))
+      (let ((key-str (format "C-M-%c" c)))
         (unless (member key-str ghostel-keymap-exceptions)
           (define-key map (kbd key-str) #'ghostel--send-event))))
     ;; M-DEL: TTY Emacs delivers Alt-Backspace as ESC + 0x7f, which

@@ -7907,6 +7907,33 @@ side effects have to happen explicitly inside the command."
   ;; ghostel--send-event instead of global backward-kill-word.
   (should (eq (lookup-key ghostel-mode-map (kbd "M-DEL")) #'ghostel--send-event)))
 
+(ert-deftest ghostel-test-control-meta-key-bindings ()
+  "Every non-exception Control-Meta letter chord routes to `ghostel--send-event'.
+Regression test for issue #239: these chords must reach the shell as ESC +
+control byte so readline `.inputrc' rules like \"\\e\\<C-letter>\" can fire,
+instead of running Emacs commands like `forward-sexp'."
+  (dolist (c (number-sequence ?a ?z))
+    (let* ((key-str (format "C-M-%c" c))
+           (binding (lookup-key ghostel-mode-map (kbd key-str))))
+      (if (member key-str ghostel-keymap-exceptions)
+          (should-not (eq binding #'ghostel--send-event))
+        (should (eq binding #'ghostel--send-event))))))
+
+(ert-deftest ghostel-test-encode-key-legacy-control-meta ()
+  "Control-Meta letter chords encode to ESC + control byte in legacy mode.
+Regression test for issue #239: these byte sequences match readline
+`.inputrc' rules of the form \"\\e\\<C-letter>\"."
+  (let* ((term (ghostel--new 25 80 1000))
+         (sent nil))
+    (cl-letf (((symbol-function 'ghostel--flush-output)
+               (lambda (data) (setq sent data))))
+      (setq sent nil)
+      (should (ghostel--encode-key term "f" "ctrl,meta" nil))
+      (should (equal "\e\x06" sent))
+      (setq sent nil)
+      (should (ghostel--encode-key term "v" "ctrl,meta" nil))
+      (should (equal "\e\x16" sent)))))
+
 (ert-deftest ghostel-test-special-key-modifier-bindings ()
   "Modified special keys are bound unless in `ghostel-keymap-exceptions'.
 Covers e.g. C-<return>, C-M-<down>, S-<f1>."
@@ -10251,6 +10278,7 @@ slip past the unit tests."
     ghostel-test-c-g-exits-copy-mode
     ghostel-test-inhibit-quit
     ghostel-test-meta-key-bindings
+    ghostel-test-control-meta-key-bindings
     ghostel-test-special-key-modifier-bindings
     ghostel-test-special-key-exceptions-honored
     ghostel-test-send-event-tty-esc-prefix
