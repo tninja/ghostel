@@ -476,6 +476,15 @@ regex run after each redraw and `read-passwd' is invoked on a rising
 edge.  See `ghostel--detect-password-prompt'."
   :type 'boolean)
 
+(defcustom ghostel-password-prompt-debounce 0.2
+  "Seconds to wait after a rising edge before opening `read-passwd'.
+When the canonical+!echo heuristic first fires, ghostel waits this
+long and re-checks before invoking `ghostel-password-prompt-functions'.
+Sub-debounce flips (e.g. shell quirks that flap echo briefly) never
+reach the user - matching ghostty's natural 200 ms termios polling
+cadence.  Set to 0 to open the prompt immediately."
+  :type 'number)
+
 (defcustom ghostel-notification-function #'ghostel-default-notify
   "Function called for OSC 9 / OSC 777 desktop notifications.
 Called with two string arguments: TITLE and BODY.  Title is empty
@@ -4182,7 +4191,6 @@ prompts while output continues streaming in."
   (ghostel--navigate-previous-prompt n))
 
 
-
 ;;; OSC 133 imenu integration
 
 ;; Each OSC 133 prompt becomes an imenu entry.  Label is
@@ -4328,6 +4336,39 @@ naturally re-arm the detector for follow-on prompts (a second
 `sudo' in a script, a wrong-password retry that prints `Sorry,
 try again.' on a new row).")
 
+(defvar-local ghostel--password-prompt-active nil
+  "Non-nil while the `ghostel-password-prompt-functions' chain is running.
+Set around the hook chain in `ghostel--prompt-password' and cleared
+in its unwind.  Note: \"active\" means the source chain is executing,
+not that a minibuffer is necessarily open - a source may complete
+without opening one (e.g. `auth-source' returning a cached secret).
+The falling-edge handler uses this together with
+`ghostel--password-prompt-outer-depth' and the minibuffer-identity
+gate in `ghostel--cancel-password-prompt' to abort only our own
+minibuffer.")
+
+(defvar-local ghostel--password-prompt-outer-depth nil
+  "Value of `minibuffer-depth' captured when our prompt opened.
+`ghostel--cancel-password-prompt' aborts the active minibuffer only
+when the current depth is `(1+ outer-depth)' - i.e. our `read-passwd'
+is the innermost recursive edit.  This keeps the cancel from
+clobbering an unrelated minibuffer (e.g. an `M-x' the user opened
+before the false-positive rising edge fired).")
+
+(defvar-local ghostel--password-confirm-timer nil
+  "Pending debounce timer for `ghostel-password-prompt-debounce'.
+Scheduled by `ghostel--detect-password-prompt' on the rising edge;
+cancelled on the falling edge or before re-scheduling.  The timer
+body (`ghostel--confirm-and-prompt') re-runs the heuristic before calling
+`ghostel--prompt-password' so short-lived flips never reach the user.")
+
+(defvar-local ghostel--password-prompt-mb-buffer nil
+  "Minibuffer buffer of our currently-open `read-passwd' prompt, or nil.
+Captured by a `minibuffer-with-setup-hook' wrapped around the
+`ghostel-password-prompt-functions' chain, but only for minibuffers entered
+from this ghostel buffer's window - so an unrelated minibuffer that happens
+to open while our source is mid-IO doesn't poison the capture.")
+
 (defun ghostel--remote-shell-p ()
   "Return non-nil when the foreground shell is on a remote host.
 Trusts TRAMP `default-directory': ghostel's OSC 7 handler
@@ -4395,20 +4436,72 @@ Matching is case-insensitive, mirroring `comint-watch-for-password-prompt'."
               (case-fold-search t))
     (string-match-p ghostel-password-prompt-regex row)))
 
+(defun ghostel--cancel-password-confirm-timer ()
+  "Cancel the pending `ghostel--password-confirm-timer', if any."
+  (when ghostel--password-confirm-timer
+    (cancel-timer ghostel--password-confirm-timer)
+    (setq ghostel--password-confirm-timer nil)))
+
+(defun ghostel--cancel-password-prompt ()
+  "Abort our in-flight `read-passwd' minibuffer, if it is the innermost ours.
+Two gates make sure we abort only a minibuffer we opened:
+
+  - Depth: current `minibuffer-depth' must be `outer+1', i.e. exactly
+    one minibuffer-level (ours) opened since our prompt began.
+  - Minibuffer identity: `(active-minibuffer-window)''s buffer must
+    equal `ghostel--password-prompt-mb-buffer', captured by the
+    setup hook when our `read-passwd' was entered.  This is robust
+    to the user switching focus out of the minibuffer (which makes
+    `minibuffer-selected-window' return nil) and to cross-buffer
+    races where an unrelated minibuffer (e.g. `M-x' in another
+    buffer) is at the matching depth."
+  (when (and ghostel--password-prompt-active
+             ghostel--password-prompt-outer-depth
+             (= (minibuffer-depth)
+                (1+ ghostel--password-prompt-outer-depth))
+             ghostel--password-prompt-mb-buffer
+             (let ((amw (active-minibuffer-window)))
+               (and amw (eq (window-buffer amw)
+                            ghostel--password-prompt-mb-buffer))))
+    (abort-recursive-edit)))
+
+(defun ghostel--confirm-and-prompt (buf)
+  "Re-check the password heuristic in BUF and open `ghostel--prompt-password'.
+Body of the `ghostel-password-prompt-debounce' timer scheduled on
+the rising edge by `ghostel--detect-password-prompt'.  Re-running
+`ghostel--password-prompt-detected-p' here is what filters sub-debounce
+flickers — they cleared `ghostel--password-mode-p' on the falling
+edge, so we no-op."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (setq ghostel--password-confirm-timer nil)
+      (when (and ghostel--password-mode-p
+                 (ghostel--password-prompt-detected-p))
+        (ghostel--prompt-password)))))
+
 (defun ghostel--detect-password-prompt ()
-  "Update `ghostel--password-mode-p' and run hook on rising edge.
-Called from `ghostel--delayed-redraw' once the buffer reflects
-the latest output.  No-op when `ghostel-detect-password-prompts'
-is nil (e.g. ghostel-compile buffers, which run the pty in
-`canonical+!echo' on purpose).  Suppresses re-fires while the
-cursor is still on the row where the previous handler returned
-\(see `ghostel--password-handled-cursor')."
+  "Update `ghostel--password-mode-p' and arm the confirm timer.
+Called from `ghostel--delayed-redraw' once the buffer reflects the
+latest output.  No-op when `ghostel-detect-password-prompts' is nil
+\(e.g. ghostel-compile buffers, which run the pty in `canonical+!echo'
+on purpose).  Suppresses re-fires while the cursor is still on the
+row where the previous handler returned (see
+`ghostel--password-handled-cursor').
+
+A rising edge schedules `ghostel--confirm-and-prompt' after
+`ghostel-password-prompt-debounce' seconds; the falling edge cancels
+that timer and, if our `read-passwd' has already opened, aborts it
+via `ghostel--cancel-password-prompt'.  Net effect: short-lived
+canonical+!echo flips trigger nothing more than a brief mode-line
+indicator flash, mirroring ghostty's transient lock-icon behavior."
   (when ghostel-detect-password-prompts
     (let ((now (ghostel--password-prompt-detected-p))
           (cursor ghostel--cursor-pos))
       (cond
        ;; Echo back on — clear all state so a future prompt re-arms.
        ((not now)
+        (ghostel--cancel-password-confirm-timer)
+        (ghostel--cancel-password-prompt)
         (when (or ghostel--password-mode-p ghostel--password-handled-cursor)
           (setq ghostel--password-mode-p nil
                 ghostel--password-handled-cursor nil)
@@ -4427,15 +4520,13 @@ cursor is still on the row where the previous handler returned
         (ghostel--mode-line-refresh)
         ;; Defer so the prompt minibuffer doesn't open from inside the
         ;; process filter — opening it there blocks further PTY output
-        ;; until the user submits.
-        (let ((buf (current-buffer)))
-          (run-at-time
-           0 nil
-           (lambda ()
-             (when (buffer-live-p buf)
-               (with-current-buffer buf
-                 (when ghostel--password-mode-p
-                   (ghostel--prompt-password))))))))))))
+        ;; until the user submits.  The debounce additionally gates the
+        ;; open on a re-check after `ghostel-password-prompt-debounce'.
+        (ghostel--cancel-password-confirm-timer)
+        (setq ghostel--password-confirm-timer
+              (run-at-time ghostel-password-prompt-debounce nil
+                           #'ghostel--confirm-and-prompt
+                           (current-buffer))))))))
 
 (defun ghostel--default-password-source (row)
   "Default password source: prompt with `read-passwd'.
@@ -4456,12 +4547,31 @@ suppression so the detector doesn't re-fire while the foreground
 program restores echo.  State cleanup runs even when a source
 signals quit (`keyboard-quit' during `read-passwd'), so the
 indicator and suppression always reach a sane state."
-  (let ((pwd nil)
-        (row (ghostel--cursor-row-text)))
+  (let* ((pwd nil)
+         (row (ghostel--cursor-row-text))
+         (origin (current-buffer)))
+    (setq ghostel--password-prompt-outer-depth (minibuffer-depth)
+          ghostel--password-prompt-active t
+          ghostel--password-prompt-mb-buffer nil)
     (unwind-protect
-        (setq pwd (run-hook-with-args-until-success
-                   'ghostel-password-prompt-functions
-                   row))
+        (minibuffer-with-setup-hook
+            (lambda ()
+              ;; Runs in the minibuffer buffer during setup; `current-buffer' is
+              ;; the new minibuffer and `selected-window' is its window.
+              ;; Only capture when the minibuffer was entered from ORIGIN - an
+              ;; unrelated minibuffer opened concurrently has a different parent
+              ;; window and must not poison our captured buffer.
+              (let ((sw (minibuffer-selected-window))
+                    (mb (current-buffer)))
+                (when (and sw (eq (window-buffer sw) origin))
+                  (with-current-buffer origin
+                    (setq ghostel--password-prompt-mb-buffer mb)))))
+          (setq pwd (run-hook-with-args-until-success
+                     'ghostel-password-prompt-functions
+                     row)))
+      (setq ghostel--password-prompt-active nil
+            ghostel--password-prompt-outer-depth nil
+            ghostel--password-prompt-mb-buffer nil)
       ;; The (concat pwd "\r") wire copy is freshly allocated and owned by us,
       ;; so `clear-string' it after the send.  Nested `unwind-protect' so the
       ;; wire is cleared even if `process-send-string' errors (e.g. process died
@@ -4946,6 +5056,7 @@ PROCESS is the shell process, EVENT describes the state change."
           (setq ghostel--plain-link-detection-timer nil
                 ghostel--plain-link-detection-begin nil
                 ghostel--plain-link-detection-end nil))
+        (ghostel--cancel-password-confirm-timer)
         (ghostel--spinner-stop)
         (remove-hook 'pre-redisplay-functions #'ghostel--fake-cursor-update t)
         (ghostel--fake-cursor-clear)

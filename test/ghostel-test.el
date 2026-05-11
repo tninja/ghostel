@@ -4128,7 +4128,10 @@ a successful submission."
       (when (buffer-live-p buf) (kill-buffer buf)))))
 
 (ert-deftest ghostel-test-detect-password-prompt-fires-once-per-edge ()
-  "Hook fires on rising edge only; falling edge clears state."
+  "Hook fires on rising edge only; falling edge clears state.
+`ghostel-password-prompt-debounce' is set to 0 so the confirm timer
+fires on the next event-loop tick — the test is about edge logic,
+not the debounce window itself (covered separately)."
   (let* ((buf (generate-new-buffer " *ghostel-test-pwd-edge*"))
          (calls 0)
          (now nil))
@@ -4139,7 +4142,8 @@ a successful submission."
           (setq ghostel--term-rows 5)
           (ghostel--redraw ghostel--term)
           (let ((ghostel-password-prompt-functions
-                 (list (lambda (_row) (cl-incf calls) nil))))
+                 (list (lambda (_row) (cl-incf calls) nil)))
+                (ghostel-password-prompt-debounce 0))
             (cl-letf (((symbol-function 'ghostel--password-prompt-detected-p)
                        (lambda () now)))
               (setq now t)
@@ -4164,7 +4168,9 @@ a successful submission."
 Regression: sudo (and friends) hold the tty in canonical+!echo for
 tens of milliseconds after read() returns; the next PTY chunk would
 otherwise look like a fresh rising edge and pop a second
-`read-passwd' minibuffer."
+`read-passwd' minibuffer.  Debounce is set to 0 so the confirm
+timer fires on the next event-loop tick — this test is about the
+handled-row suppression, not the debounce window."
   (let* ((buf (generate-new-buffer " *ghostel-test-pwd-suppress*"))
          (calls 0))
     (unwind-protect
@@ -4173,7 +4179,8 @@ otherwise look like a fresh rising edge and pop a second
           (setq ghostel--term (ghostel--new 5 80 1000))
           (setq ghostel--term-rows 5)
           (let ((ghostel-password-prompt-functions
-                 (list (lambda (_row) (cl-incf calls) nil))))
+                 (list (lambda (_row) (cl-incf calls) nil)))
+                (ghostel-password-prompt-debounce 0))
             (cl-letf (((symbol-function 'ghostel--password-prompt-detected-p)
                        (lambda () t))
                       (ghostel--cursor-pos '(0 . 2)))
@@ -4200,6 +4207,239 @@ otherwise look like a fresh rising edge and pop a second
               (sleep-for 0.05)
               (should (= 2 calls)))))
       (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest ghostel-test-password-debounce-defers-source-call ()
+  "Rising edge schedules a confirm timer; source is NOT called synchronously.
+The source runs only after the debounce elapses and the heuristic
+is re-confirmed (mirrors ghostty's ~200 ms termios polling cadence)."
+  (let* ((buf (generate-new-buffer " *ghostel-test-pwd-debounce-defer*"))
+         (calls 0))
+    (unwind-protect
+        (with-current-buffer buf
+          (ghostel-mode)
+          (setq ghostel--term (ghostel--new 5 80 1000))
+          (setq ghostel--term-rows 5)
+          (ghostel--redraw ghostel--term)
+          (let ((ghostel-password-prompt-functions
+                 (list (lambda (_row) (cl-incf calls) "x")))
+                (ghostel-password-prompt-debounce 0.1))
+            (cl-letf (((symbol-function 'ghostel--password-prompt-detected-p)
+                       (lambda () t))
+                      ((symbol-function 'process-send-string)
+                       (lambda (_p _d) nil)))
+              (ghostel--detect-password-prompt)
+              (should ghostel--password-mode-p)
+              (should ghostel--password-confirm-timer)
+              (should (= 0 calls))
+              (sleep-for 0.25)
+              (should (= 1 calls))
+              (should-not ghostel--password-confirm-timer))))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest ghostel-test-password-debounce-cancels-on-sub-debounce-flicker ()
+  "Sub-debounce flicker cancels the confirm timer; source is never called.
+This is the false-positive defense that mirrors ghostty's natural
+undersampling — a canonical+!echo flip shorter than the debounce
+window never reaches the user."
+  (let* ((buf (generate-new-buffer " *ghostel-test-pwd-debounce-flicker*"))
+         (calls 0)
+         (now t))
+    (unwind-protect
+        (with-current-buffer buf
+          (ghostel-mode)
+          (setq ghostel--term (ghostel--new 5 80 1000))
+          (setq ghostel--term-rows 5)
+          (ghostel--redraw ghostel--term)
+          (let ((ghostel-password-prompt-functions
+                 (list (lambda (_row) (cl-incf calls) "x")))
+                (ghostel-password-prompt-debounce 0.5))
+            (cl-letf (((symbol-function 'ghostel--password-prompt-detected-p)
+                       (lambda () now)))
+              (ghostel--detect-password-prompt)
+              (should ghostel--password-confirm-timer)
+              (should ghostel--password-mode-p)
+              ;; Falling edge before timer fires.
+              (setq now nil)
+              (ghostel--detect-password-prompt)
+              (should-not ghostel--password-confirm-timer)
+              (should-not ghostel--password-mode-p)
+              (sleep-for 0.6)
+              (should (= 0 calls)))))
+      (when (buffer-live-p buf) (kill-buffer buf)))))
+
+(ert-deftest ghostel-test-cancel-password-prompt-depth-gate ()
+  "`ghostel--cancel-password-prompt' aborts only when depth is outer+1.
+Other depths (no minibuffer, equal to outer, or deeper) are no-ops
+so unrelated minibuffers (e.g. `M-x' the user opened before the
+rising edge) survive.  The minibuffer-identity gate is satisfied
+by stubbing `active-minibuffer-window' + `window-buffer' to return
+the same buffer we set as `ghostel--password-prompt-mb-buffer'."
+  (let ((buf (generate-new-buffer " *ghostel-test-pwd-cancel-gate*"))
+        (mb-buf (generate-new-buffer " *ghostel-test-pwd-mb*"))
+        (aborted 0)
+        (depth 0))
+    (unwind-protect
+        (with-current-buffer buf
+          (ghostel-mode)
+          (cl-letf (((symbol-function 'minibuffer-depth) (lambda () depth))
+                    ((symbol-function 'active-minibuffer-window)
+                     (lambda () 'fake-window))
+                    ((symbol-function 'window-buffer)
+                     (lambda (_w) mb-buf))
+                    ((symbol-function 'abort-recursive-edit)
+                     (lambda () (cl-incf aborted))))
+            (setq ghostel--password-prompt-mb-buffer mb-buf)
+            ;; Flag off → no abort regardless of depth.
+            (setq ghostel--password-prompt-active nil
+                  ghostel--password-prompt-outer-depth 0
+                  depth 1)
+            (ghostel--cancel-password-prompt)
+            (should (= 0 aborted))
+            ;; Flag on, depth == outer (prompt not yet opened) → no abort.
+            (setq ghostel--password-prompt-active t
+                  ghostel--password-prompt-outer-depth 1
+                  depth 1)
+            (ghostel--cancel-password-prompt)
+            (should (= 0 aborted))
+            ;; Flag on, depth == outer+1 → our minibuffer is innermost; abort.
+            (setq depth 2)
+            (ghostel--cancel-password-prompt)
+            (should (= 1 aborted))
+            ;; Flag on, depth > outer+1 (something stacked on top) → no abort.
+            (setq depth 3)
+            (ghostel--cancel-password-prompt)
+            (should (= 1 aborted))))
+      (when (buffer-live-p buf) (kill-buffer buf))
+      (when (buffer-live-p mb-buf) (kill-buffer mb-buf)))))
+
+(ert-deftest ghostel-test-cancel-password-prompt-mb-identity-gate ()
+  "Identity gate blocks abort when the active minibuffer isn't ours.
+Stub setup: depth=1, outer=0 (so depth gate passes).  The cancel
+fires only when `(window-buffer (active-minibuffer-window))' equals
+`ghostel--password-prompt-mb-buffer' — i.e. the active minibuffer
+is the one our setup hook captured.  Covers two failure modes:
+  - Captured nil (our chain ran but never opened a minibuffer);
+  - Active minibuffer is some other buffer (cross-buffer race or
+    nested minibuffer that pushed us off the innermost slot)."
+  (let ((buf (generate-new-buffer " *ghostel-test-pwd-mb-gate*"))
+        (our-mb (generate-new-buffer " *ghostel-test-pwd-our-mb*"))
+        (other-mb (generate-new-buffer " *ghostel-test-pwd-other-mb*"))
+        (aborted 0)
+        (active-mb-buf nil))
+    (unwind-protect
+        (with-current-buffer buf
+          (ghostel-mode)
+          (cl-letf (((symbol-function 'minibuffer-depth) (lambda () 1))
+                    ((symbol-function 'active-minibuffer-window)
+                     (lambda () (and active-mb-buf 'fake-window)))
+                    ((symbol-function 'window-buffer)
+                     (lambda (_w) active-mb-buf))
+                    ((symbol-function 'abort-recursive-edit)
+                     (lambda () (cl-incf aborted))))
+            (setq ghostel--password-prompt-active t
+                  ghostel--password-prompt-outer-depth 0)
+            ;; Captured nil → never abort.
+            (setq ghostel--password-prompt-mb-buffer nil
+                  active-mb-buf our-mb)
+            (ghostel--cancel-password-prompt)
+            (should (= 0 aborted))
+            ;; Captured but active minibuffer is a different buffer → no abort.
+            (setq ghostel--password-prompt-mb-buffer our-mb
+                  active-mb-buf other-mb)
+            (ghostel--cancel-password-prompt)
+            (should (= 0 aborted))
+            ;; Captured matches active minibuffer → abort.
+            (setq active-mb-buf our-mb)
+            (ghostel--cancel-password-prompt)
+            (should (= 1 aborted))
+            ;; No active minibuffer at all → no abort.
+            (setq active-mb-buf nil)
+            (ghostel--cancel-password-prompt)
+            (should (= 1 aborted))))
+      (when (buffer-live-p buf) (kill-buffer buf))
+      (when (buffer-live-p our-mb) (kill-buffer our-mb))
+      (when (buffer-live-p other-mb) (kill-buffer other-mb)))))
+
+(ert-deftest ghostel-test-prompt-password-mb-buffer-capture ()
+  "Setup hook in `ghostel--prompt-password' captures the right minibuffer.
+The lambda installed by `minibuffer-with-setup-hook' must set
+`ghostel--password-prompt-mb-buffer' only when the minibuffer was
+entered from the origin buffer's window — an unrelated minibuffer
+opened concurrently (cross-buffer race) must not poison the
+capture.  Drives `minibuffer-setup-hook' directly from a stubbed
+source so the hook fires under controlled conditions without
+involving a real `read-passwd' call, and snapshots
+`ghostel--password-prompt-mb-buffer' before the unwind clears it."
+  (let ((origin (generate-new-buffer " *ghostel-test-pwd-capture-origin*"))
+        (mb (generate-new-buffer " *ghostel-test-pwd-capture-mb*"))
+        (other (generate-new-buffer " *ghostel-test-pwd-capture-other*"))
+        (snapshot 'sentinel))
+    (unwind-protect
+        (with-current-buffer origin
+          (ghostel-mode)
+          (setq ghostel--process 'fake-proc)
+          (cl-letf (((symbol-function 'processp) (lambda (_p) t))
+                    ((symbol-function 'process-live-p) (lambda (_p) t))
+                    ((symbol-function 'process-send-string) (lambda (_p _d) nil)))
+            ;; Case 1: minibuffer entered from ORIGIN → capture.
+            (let ((ghostel-password-prompt-functions
+                   (list (lambda (_row)
+                           (with-current-buffer mb
+                             (cl-letf (((symbol-function 'minibuffer-selected-window)
+                                        (lambda () 'fake-win))
+                                       ((symbol-function 'window-buffer)
+                                        (lambda (_w) origin)))
+                               (run-hooks 'minibuffer-setup-hook)))
+                           (setq snapshot ghostel--password-prompt-mb-buffer)
+                           "x"))))
+              (ghostel--prompt-password))
+            (should (eq snapshot mb))
+            ;; Case 2: minibuffer entered from a different buffer → no capture.
+            (setq snapshot 'sentinel)
+            (let ((ghostel-password-prompt-functions
+                   (list (lambda (_row)
+                           (with-current-buffer mb
+                             (cl-letf (((symbol-function 'minibuffer-selected-window)
+                                        (lambda () 'fake-win))
+                                       ((symbol-function 'window-buffer)
+                                        (lambda (_w) other)))
+                               (run-hooks 'minibuffer-setup-hook)))
+                           (setq snapshot ghostel--password-prompt-mb-buffer)
+                           "x"))))
+              (ghostel--prompt-password))
+            (should-not snapshot)))
+      (when (buffer-live-p origin) (kill-buffer origin))
+      (when (buffer-live-p mb) (kill-buffer mb))
+      (when (buffer-live-p other) (kill-buffer other)))))
+
+(ert-deftest ghostel-test-password-detect-aborts-on-falling-edge ()
+  "Falling edge with prompt active and right depth calls `abort-recursive-edit'.
+Routes through `ghostel--cancel-password-prompt' from the falling-edge
+branch of `ghostel--detect-password-prompt'.  Identity gate is
+satisfied by setting `ghostel--password-prompt-mb-buffer' and
+stubbing `active-minibuffer-window' / `window-buffer' to return it."
+  (let ((buf (generate-new-buffer " *ghostel-test-pwd-falling-abort*"))
+        (mb-buf (generate-new-buffer " *ghostel-test-pwd-falling-mb*"))
+        (aborted 0))
+    (unwind-protect
+        (with-current-buffer buf
+          (ghostel-mode)
+          (cl-letf (((symbol-function 'ghostel--password-prompt-detected-p)
+                     (lambda () nil))
+                    ((symbol-function 'minibuffer-depth) (lambda () 1))
+                    ((symbol-function 'active-minibuffer-window)
+                     (lambda () 'fake-window))
+                    ((symbol-function 'window-buffer)
+                     (lambda (_w) mb-buf))
+                    ((symbol-function 'abort-recursive-edit)
+                     (lambda () (cl-incf aborted))))
+            (setq ghostel--password-prompt-active t
+                  ghostel--password-prompt-outer-depth 0
+                  ghostel--password-prompt-mb-buffer mb-buf)
+            (ghostel--detect-password-prompt)
+            (should (= 1 aborted))))
+      (when (buffer-live-p buf) (kill-buffer buf))
+      (when (buffer-live-p mb-buf) (kill-buffer mb-buf)))))
 
 ;; -----------------------------------------------------------------------
 ;; Test: ghostel-command-finish-functions hook
