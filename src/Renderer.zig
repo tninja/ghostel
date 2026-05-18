@@ -491,10 +491,11 @@ pub const RowContent = struct {
     };
 
     const CellInfo = struct {
-        byte_start: usize,
-        byte_end: usize,
-        char_start: usize,
-        char_end: usize,
+        col: i64,
+        byte_start: i64,
+        byte_end: i64,
+        char_start: i64,
+        char_end: i64,
         wide: bool,
     };
 
@@ -543,8 +544,9 @@ pub const RowContent = struct {
         const row_hints = try readRowHints(raw_row);
 
         var current_prop_key: ?CellPropKey = null;
+        var col: i64 = 0;
         try gt.rs_row.read(row, gt.RS_ROW_DATA_CELLS, row_cells);
-        while (gt.rs_row_cells_next(row_cells.*)) {
+        while (gt.rs_row_cells_next(row_cells.*)) : (col += 1) {
             const raw_cell = try gt.rs_row_cells.get(
                 gt.c.GhosttyCell,
                 row_cells.*,
@@ -610,10 +612,11 @@ pub const RowContent = struct {
             // to fit into the monospace grid.
             if (self.graphemes.items.len > 1 or self.graphemes.items[0] >= adjustment_threshold) {
                 try self.adjust_cells.append(RowContent.allocator, .{
-                    .byte_start = byte_start,
-                    .byte_end = self.text.items.len,
-                    .char_start = char_start,
-                    .char_end = self.char_len,
+                    .col = col,
+                    .byte_start = @intCast(byte_start),
+                    .byte_end = @intCast(self.text.items.len),
+                    .char_start = @intCast(char_start),
+                    .char_end = @intCast(self.char_len),
                     .wide = wide == gt.c.GHOSTTY_CELL_WIDE_WIDE,
                 });
             }
@@ -688,14 +691,14 @@ fn readRowHints(row: gt.c.GhosttyRow) !RowHints {
     };
 }
 
-fn adjustGlyphs(self: *Self, env: emacs.Env, row_start: i64) void {
+fn adjustGlyphs(self: *Self, env: emacs.Env, row_start: i64, row_end: i64) void {
     if (self.row.adjust_cells.items.len == 0) return;
     if (self.font_info == null) return;
     const window = env.f("selected-window", .{});
     if (env.isNil(window)) return;
 
     for (self.row.adjust_cells.items) |*cell| {
-        self.adjustGlyph(env, window, row_start, cell);
+        self.adjustGlyph(env, window, row_start, row_end, cell);
     }
 }
 
@@ -704,6 +707,7 @@ fn adjustGlyph(
     env: emacs.Env,
     window: emacs.Value,
     row_start: i64,
+    row_end: i64,
     cell: *const RowContent.CellInfo,
 ) void {
     const default_font_info = self.font_info.?;
@@ -731,19 +735,48 @@ fn adjustGlyph(
     // [FROM-IDX TO-IDX C CODE WIDTH LBEARING RBEARING ASCENT DESCENT ADJUSTMENT]
     const glyph = env.vecGet(glyphs, 0);
     const width = env.extractInteger(env.vecGet(glyph, 4));
-    const num_cells: i64 = if (cell.wide) 2 else 1;
-
-    const max_width = default_font_info.width * num_cells;
+    var char_width: i64 = if (cell.wide) 2 else 1;
+    var slot_width = default_font_info.width * char_width;
 
     // Skip adjustments if size already matches perfectly
-    if (max_width == width and default_font_info.height == height) return;
+    if (width == slot_width and height == default_font_info.height) return;
+
+    // Let's check if we can claim some space after the glyph to be able to render
+    // it larger than the cell size while still maintaining alignment.
+    const pre_char_width = char_width;
+    while (cell.col + char_width < self.size.cols) : ({
+        char_width += 1;
+        slot_width = default_font_info.width * char_width;
+    }) {
+        const cell_aspect = @as(f64, @floatFromInt(slot_width)) / @as(f64, @floatFromInt(default_font_info.height));
+        const glyph_aspect = @as(f64, @floatFromInt(width)) / @as(f64, @floatFromInt(height));
+        // If the aspect of the glyph is narrower than that of the cell, we're done
+        if (glyph_aspect < cell_aspect) break;
+
+        const claim_pos = row_start + cell.char_end + (char_width - pre_char_width);
+        // Lines are right-trimmed of trailing spaces, so positions at and past
+        // the newline represent empty space we can freely claim.
+        if (claim_pos >= row_end - 1) continue;
+
+        const c = env.extractInteger(env.f("char-after", .{claim_pos}));
+        if (c == ' ') {
+            env.putTextProperty(
+                claim_pos,
+                claim_pos + 1,
+                "display",
+                env.cons(s.space, env.list(.{ s.@":width", 0 })),
+            );
+        } else {
+            break;
+        }
+    }
 
     // We add a fudge factor of +1 to the denominator to ensure fit
-    const scale_width = @as(f64, @floatFromInt(max_width)) / @as(f64, @floatFromInt(width + 1));
+    const scale_width = @as(f64, @floatFromInt(slot_width)) / @as(f64, @floatFromInt(width + 1));
     const scale_height = @as(f64, @floatFromInt(default_font_info.height)) / @as(f64, @floatFromInt(height + 1));
     const scale = @min(scale_width, scale_height);
 
-    const min_width_spec = env.list(.{ s.@"min-width", env.list(.{num_cells}) });
+    const min_width_spec = env.list(.{ s.@"min-width", env.list(.{char_width}) });
     const scale_spec = env.list(.{ s.height, scale });
     const display_spec = env.list(.{ min_width_spec, scale_spec });
     _ = env.f("put-text-property", .{ start_val, end_val, s.display, display_spec });
@@ -765,6 +798,7 @@ fn insertRow(
 
     const row_start = env.extractInteger(env.point());
     env.insert(self.row.text.items);
+    const row_end = env.extractInteger(env.point());
 
     for (self.row.runs.items) |*run| {
         if (run.end_char <= run.start_char) continue;
@@ -776,7 +810,7 @@ fn insertRow(
         }
     }
 
-    self.adjustGlyphs(env, row_start);
+    self.adjustGlyphs(env, row_start, row_end);
 
     if (try self.isRowWrapped()) {
         // Mark newlines from soft-wrapped rows so copy mode can filter them
