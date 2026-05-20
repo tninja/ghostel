@@ -70,10 +70,10 @@ buffer eventually shows up."
 
 (ert-deftest ghostel-test-exec-windows-local-stays-on-pty-path ()
   "`ghostel-exec' should keep the PTY transport on local Windows.
-The native Windows backend needs transport abstractions that `ghostel-exec'
-does not wire up in this branch yet; routing through it makes input fail."
+The native Windows backend needs transport abstractions before `ghostel-exec'
+can use it without breaking interactive input."
   (let ((buf (generate-new-buffer "ghostel-exec-windows-test"))
-        (captured nil))
+        captured)
     (unwind-protect
         (let ((system-type 'windows-nt))
           (cl-letf (((symbol-function 'ghostel--load-module) #'ignore)
