@@ -68,10 +68,12 @@ buffer eventually shows up."
                                  (ghostel--kitty-mediums-bits))))))
       (kill-buffer buf))))
 
-(ert-deftest ghostel-test-exec-windows-uses-native-start-when-available ()
-  "`ghostel-exec' should reuse the Windows native backend when it exists."
+(ert-deftest ghostel-test-exec-windows-local-stays-on-pty-path ()
+  "`ghostel-exec' should keep the PTY transport on local Windows.
+The native Windows backend needs transport abstractions that `ghostel-exec'
+does not wire up in this branch yet; routing through it makes input fail."
   (let ((buf (generate-new-buffer "ghostel-exec-windows-test"))
-        captured)
+        (captured nil))
     (unwind-protect
         (let ((system-type 'windows-nt))
           (cl-letf (((symbol-function 'ghostel--load-module) #'ignore)
@@ -80,14 +82,16 @@ buffer eventually shows up."
                     ((symbol-function 'ghostel--set-size-with-cell-dims) #'ignore)
                     ((symbol-function 'ghostel--apply-palette) #'ignore)
                     ((symbol-function 'ghostel--start-process-windows)
-                     (lambda (state) (setq captured state) 'fake-proc))
-                    ((symbol-function 'ghostel--spawn-pty)
                      (lambda (&rest _)
-                       (ert-fail "`ghostel-exec' should not use POSIX PTY on Windows when native backend exists"))))
+                       (ert-fail "`ghostel-exec' should not use the native Windows backend here")))
+                    ((symbol-function 'ghostel--spawn-pty)
+                     (lambda (&rest args)
+                       (setq captured args)
+                       'fake-proc)))
             (should (eq (ghostel-exec buf "aider" '("--yes")) 'fake-proc))
-            (should (equal (plist-get captured :shell-command)
-                           '("aider" "--yes")))
-            (should-not (plist-get captured :remote-p))))
+            (should (equal captured
+                           (list "aider" '("--yes") 24 80
+                                 ghostel--default-stty nil nil)))))
       (kill-buffer buf))))
 
 (ert-deftest ghostel-test-eshell-visual-command-mode-toggles-advice ()
