@@ -498,10 +498,10 @@ the process.
 
 COMMAND is passed verbatim to `shell-file-name' via
 `shell-command-switch', so multi-line scripts and shell
- metacharacters are handled the same way `M-x compile' handles
- them.  On POSIX locals and remote spawns, `/bin/sh' is used only to
- set PTY attributes (`stty') before exec'ing the user's shell; local
- Windows spawns invoke the user's shell directly.
+metacharacters are handled the same way `M-x compile' handles
+them.  On POSIX locals and remote spawns, `/bin/sh' is used only to
+set PTY attributes (`stty') before exec'ing the user's shell; local
+Windows spawns invoke the user's shell directly.
 
 For remote (TRAMP) `default-directory's, `shell-file-name' and
 `shell-command-switch' are resolved via `with-connection-local-variables'
