@@ -68,6 +68,28 @@ buffer eventually shows up."
                                  (ghostel--kitty-mediums-bits))))))
       (kill-buffer buf))))
 
+(ert-deftest ghostel-test-exec-windows-uses-native-start-when-available ()
+  "`ghostel-exec' should reuse the Windows native backend when it exists."
+  (let ((buf (generate-new-buffer "ghostel-exec-windows-test"))
+        captured)
+    (unwind-protect
+        (let ((system-type 'windows-nt))
+          (cl-letf (((symbol-function 'ghostel--load-module) #'ignore)
+                    ((symbol-function 'ghostel--new)
+                     (lambda (&rest _) 'fake-term))
+                    ((symbol-function 'ghostel--set-size-with-cell-dims) #'ignore)
+                    ((symbol-function 'ghostel--apply-palette) #'ignore)
+                    ((symbol-function 'ghostel--start-process-windows)
+                     (lambda (state) (setq captured state) 'fake-proc))
+                    ((symbol-function 'ghostel--spawn-pty)
+                     (lambda (&rest _)
+                       (ert-fail "`ghostel-exec' should not use POSIX PTY on Windows when native backend exists"))))
+            (should (eq (ghostel-exec buf "aider" '("--yes")) 'fake-proc))
+            (should (equal (plist-get captured :shell-command)
+                           '("aider" "--yes")))
+            (should-not (plist-get captured :remote-p))))
+      (kill-buffer buf))))
+
 (ert-deftest ghostel-test-eshell-visual-command-mode-toggles-advice ()
   "Enabling/disabling the mode adds/removes the `eshell-exec-visual' advice."
   (let ((was-on ghostel-eshell-visual-command-mode))

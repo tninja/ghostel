@@ -98,6 +98,7 @@
 
 (declare-function bash-completion-capf-nonexclusive "bash-completion")
 (declare-function bash-completion-require-process "bash-completion")
+(declare-function ghostel--start-process-windows "ghostel" (state))
 
 
 ;;; Customization
@@ -5987,6 +5988,33 @@ HEIGHT, WIDTH, and STTY-FLAGS are only used in the wrapper path."
                                      program-args " ")))))
     (cons program program-args)))
 
+(defun ghostel--windows-native-start-available-p (&optional remote-p)
+  "Return non-nil when a native local Windows process backend is available."
+  (and (eq system-type 'windows-nt)
+       (not remote-p)
+       (fboundp 'ghostel--start-process-windows)))
+
+(defun ghostel--exec-process-state (program program-args height width remote-p)
+  "Return process-start state for `ghostel-exec'."
+  (let ((command (ghostel--spawn-pty-command
+                  program program-args height width
+                  ghostel--default-stty remote-p))
+        (env (append
+              ghostel-environment
+              (cons "INSIDE_EMACS=ghostel"
+                    (if remote-p '() (ghostel--terminal-env)))
+              process-environment)))
+    (list :height height
+          :width width
+          :remote-p remote-p
+          :spawn-program program
+          :spawn-args program-args
+          :stty-flags ghostel--default-stty
+          :extra-env nil
+          :shell-command command
+          :remote-integration nil
+          :env-overrides env)))
+
 (defun ghostel--spawn-pty (program program-args height width stty-flags
                                     extra-env &optional remote-p)
   "Spawn PROGRAM with PROGRAM-ARGS as a PTY-backed process in the current buffer.
@@ -6927,8 +6955,19 @@ Signals `user-error' if BUFFER already has a live ghostel process."
         (ghostel--set-size-with-cell-dims ghostel--term height width)
         (ghostel--apply-palette ghostel--term)
         (ghostel--apply-bold-config ghostel--term)
-        (ghostel--spawn-pty program args height width
-                            ghostel--default-stty nil remote-p)))))
+        (if (ghostel--windows-native-start-available-p remote-p)
+            (let* ((state (ghostel--exec-process-state
+                           program args height width remote-p))
+                   (process-environment (plist-get state :env-overrides))
+                   (process-adaptive-read-buffering nil)
+                   (read-process-output-max
+                    (max read-process-output-max (* 1024 1024))))
+              (run-hooks 'ghostel-pre-spawn-hook)
+              (ghostel--start-process-windows
+               (plist-put (copy-sequence state)
+                          :env-overrides process-environment)))
+          (ghostel--spawn-pty program args height width
+                              ghostel--default-stty nil remote-p))))))
 
 ;;;###autoload
 (defun ghostel-project (&optional arg)
