@@ -5959,9 +5959,9 @@ verbatim.  `COLORTERM=truecolor' is exported unconditionally."
 
 (defun ghostel--use-posix-pty-wrapper-p (&optional remote-p)
   "Return non-nil when ghostel should use its `/bin/sh -c' PTY wrapper.
-Remote spawns always use the wrapper because TRAMP executes it on the
-remote host.  Local Windows spawns skip it because `/bin/sh' and
-`stty' are not guaranteed to exist there."
+Returns non-nil for remote spawns and non-Windows local systems.
+Returns nil for local Windows spawns because `/bin/sh' and `stty'
+are not guaranteed to exist there."
   (or remote-p (not (eq system-type 'windows-nt))))
 
 (defun ghostel--spawn-pty-command (program program-args height width stty-flags
@@ -5969,7 +5969,8 @@ remote host.  Local Windows spawns skip it because `/bin/sh' and
   "Return the `make-process' command list for spawning PROGRAM.
 On POSIX locals and all remote spawns, wrap PROGRAM in `/bin/sh -c' so
 `stty' can configure the PTY before `exec'.  On local Windows spawns,
-run PROGRAM directly because the POSIX wrapper is unavailable there."
+run PROGRAM directly because the POSIX wrapper is unavailable there.
+HEIGHT, WIDTH, and STTY-FLAGS are only used in the wrapper path."
   (if (ghostel--use-posix-pty-wrapper-p remote-p)
       (list "/bin/sh" "-c"
             (concat

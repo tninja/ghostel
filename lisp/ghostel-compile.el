@@ -478,7 +478,7 @@ header).  `sane' in the baseline turns echo on; the trailing
 On POSIX locals and all remote spawns, wrap SHELL in `/bin/sh -c' so
 `stty' can configure the PTY before `exec'.  On local Windows spawns,
 run SHELL directly with SWITCH and COMMAND because the POSIX wrapper is
-unavailable there."
+unavailable there.  HEIGHT and WIDTH are only used in the wrapper path."
   (if (ghostel--use-posix-pty-wrapper-p remote-p)
       (list "/bin/sh" "-c"
             (concat
