@@ -68,6 +68,32 @@ buffer eventually shows up."
                                  (ghostel--kitty-mediums-bits))))))
       (kill-buffer buf))))
 
+(ert-deftest ghostel-test-exec-windows-local-stays-on-pty-path ()
+  "`ghostel-exec' should keep the PTY transport on local Windows.
+The native Windows backend needs transport abstractions before `ghostel-exec'
+can use it without breaking interactive input."
+  (let ((buf (generate-new-buffer "ghostel-exec-windows-test"))
+        captured)
+    (unwind-protect
+        (let ((system-type 'windows-nt))
+          (cl-letf (((symbol-function 'ghostel--load-module) #'ignore)
+                    ((symbol-function 'ghostel--new)
+                     (lambda (&rest _) 'fake-term))
+                    ((symbol-function 'ghostel--set-size-with-cell-dims) #'ignore)
+                    ((symbol-function 'ghostel--apply-palette) #'ignore)
+                    ((symbol-function 'ghostel--start-process-windows)
+                     (lambda (&rest _)
+                       (ert-fail "`ghostel-exec' should not use the native Windows backend here")))
+                    ((symbol-function 'ghostel--spawn-pty)
+                     (lambda (&rest args)
+                       (setq captured args)
+                       'fake-proc)))
+            (should (eq (ghostel-exec buf "aider" '("--yes")) 'fake-proc))
+            (should (equal captured
+                           (list "aider" '("--yes") 24 80
+                                 ghostel--default-stty nil nil)))))
+      (kill-buffer buf))))
+
 (ert-deftest ghostel-test-eshell-visual-command-mode-toggles-advice ()
   "Enabling/disabling the mode adds/removes the `eshell-exec-visual' advice."
   (let ((was-on ghostel-eshell-visual-command-mode))

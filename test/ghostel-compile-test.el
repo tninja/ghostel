@@ -562,6 +562,13 @@ so `ghostel-recompile' (and other tooling) can rely on it."
       (should-not prompted)                                    ; no prompt
       (should (equal "make -C /tmp silent" captured-cmd)))))   ; used as-is
 
+(ert-deftest ghostel-test-compile-process-command-windows-local-bypasses-posix-wrapper ()
+  "Local Windows compile spawns must invoke the configured shell directly."
+  (let ((system-type 'windows-nt))
+    (should (equal '("pwsh" "-Command" "Get-ChildItem")
+                   (ghostel-compile--process-command
+                    "pwsh" "-Command" "Get-ChildItem" 24 80 nil)))))
+
 (ert-deftest ghostel-test-compile-prepare-buffer-no-window-side-effects ()
   "`ghostel-compile--prepare-buffer' must not touch the caller's window state.
 Specifically, it must not change the selected window or mutate its

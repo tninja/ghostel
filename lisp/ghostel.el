@@ -5953,17 +5953,49 @@ verbatim.  `COLORTERM=truecolor' is exported unconditionally."
      "export TERM_PROGRAM TERM_PROGRAM_VERSION; "
      "fi; "
      "COLORTERM=truecolor; export TERM COLORTERM; "))
-   (t
-    (concat "TERM=" (shell-quote-argument ghostel-term)
-            "; COLORTERM=truecolor; export TERM COLORTERM; "))))
+    (t
+     (concat "TERM=" (shell-quote-argument ghostel-term)
+             "; COLORTERM=truecolor; export TERM COLORTERM; "))))
+
+(defun ghostel--use-posix-pty-wrapper-p (&optional remote-p)
+  "Return non-nil when ghostel should use its `/bin/sh -c' PTY wrapper.
+Returns non-nil for remote spawns and non-Windows local systems.
+Returns nil for local Windows spawns because `/bin/sh' and `stty'
+are not guaranteed to exist there."
+  (or remote-p (not (eq system-type 'windows-nt))))
+
+(defun ghostel--spawn-pty-command (program program-args height width stty-flags
+                                           &optional remote-p)
+  "Return the `make-process' command list for spawning PROGRAM.
+On POSIX locals and all remote spawns, wrap PROGRAM in `/bin/sh -c' so
+`stty' can configure the PTY before `exec'.  On local Windows spawns,
+run PROGRAM directly because the POSIX wrapper is unavailable there.
+HEIGHT, WIDTH, and STTY-FLAGS are only used in the wrapper path."
+  (if (ghostel--use-posix-pty-wrapper-p remote-p)
+      (list "/bin/sh" "-c"
+            (concat
+             ;; Remote spawns: pick TERM via an on-remote probe
+             (and remote-p (ghostel--remote-term-preamble))
+             "stty " stty-flags
+             (format " rows %d columns %d" height width)
+             " 2>/dev/null; "
+             "printf '\\033[H\\033[2J'; exec "
+             (shell-quote-argument program)
+             (and program-args
+                  (concat " "
+                          (mapconcat #'shell-quote-argument
+                                     program-args " ")))))
+    (cons program program-args)))
 
 (defun ghostel--spawn-pty (program program-args height width stty-flags
-                                   extra-env &optional remote-p)
+                                    extra-env &optional remote-p)
   "Spawn PROGRAM with PROGRAM-ARGS as a PTY-backed process in the current buffer.
 
-Wraps PROGRAM in `/bin/sh -c' so that `stty' can configure the PTY
-\(with STTY-FLAGS plus rows=HEIGHT columns=WIDTH) and the screen is
-cleared before PROGRAM is exec'd.  EXTRA-ENV is prepended to
+On POSIX locals and remote spawns, wraps PROGRAM in `/bin/sh -c' so
+that `stty' can configure the PTY \(with STTY-FLAGS plus rows=HEIGHT
+columns=WIDTH) and the screen is cleared before PROGRAM is exec'd.
+On local Windows spawns, runs PROGRAM directly because `/bin/sh' and
+`stty' are not guaranteed to exist there.  EXTRA-ENV is prepended to
 `process-environment'.  Non-nil REMOTE-P spawns the process via the
 TRAMP file handler (for remote shells).
 
@@ -5978,19 +6010,8 @@ matches the PTY window size, and stores the process in
   ;; stty output.  exec replaces the wrapper so only the target
   ;; program remains.
   (let* ((shell-command
-          (list "/bin/sh" "-c"
-                (concat
-                 ;; Remote spawns: pick TERM via an on-remote probe
-                 (and remote-p (ghostel--remote-term-preamble))
-                 "stty " stty-flags
-                 (format " rows %d columns %d" height width)
-                 " 2>/dev/null; "
-                 "printf '\\033[H\\033[2J'; exec "
-                 (shell-quote-argument program)
-                 (and program-args
-                      (concat " "
-                              (mapconcat #'shell-quote-argument
-                                         program-args " "))))))
+          (ghostel--spawn-pty-command
+           program program-args height width stty-flags remote-p))
          (process-environment
           (append
            ghostel-environment
@@ -6871,9 +6892,11 @@ BUFFER is switched into `ghostel-mode' (if not already) and a new
 terminal is created sized to the window displaying BUFFER, or
 80x24 if BUFFER is not currently displayed.  No shell integration
 is applied — PROGRAM is exec'd directly via `ghostel--spawn-pty'.
-PROGRAM is shell-quoted before it is passed to `/bin/sh -c', so
-shell metacharacters are not interpreted; pass extra tokens via
-ARGS, a list of strings.  Returns the process.
+On POSIX locals and remote spawns, PROGRAM is shell-quoted before it
+is passed to `/bin/sh -c', so shell metacharacters are not
+interpreted; local Windows spawns bypass that wrapper and invoke
+PROGRAM directly.  Pass extra tokens via ARGS, a list of strings.
+Returns the process.
 
 Signals `user-error' if BUFFER already has a live ghostel process."
   (ghostel--load-module t)

@@ -736,8 +736,15 @@ Local spawns must not get the preamble; their TERM still rides in
               (unwind-protect
                   (let ((script (nth 2 captured-cmd)))
                     (should-not (string-match-p "infocmp" script))
-                    (should (member "TERM=xterm-ghostty" captured-env)))
-                (when (process-live-p proc) (delete-process proc))))))))))
+                     (should (member "TERM=xterm-ghostty" captured-env)))
+                 (when (process-live-p proc) (delete-process proc))))))))))
+
+(ert-deftest ghostel-test-spawn-pty-command-windows-local-bypasses-posix-wrapper ()
+  "Local Windows spawns must not depend on `/bin/sh' or `stty'."
+  (let ((system-type 'windows-nt))
+    (should (equal '("pwsh" "-NoLogo" "-NoProfile")
+                   (ghostel--spawn-pty-command
+                    "pwsh" '("-NoLogo" "-NoProfile") 25 80 "-ixon" nil)))))
 
 (ert-deftest ghostel-test-tramp-inside-emacs-preserves-ghostel-prefix ()
   "TRAMP rewrites INSIDE_EMACS but must preserve the user-set prefix.
