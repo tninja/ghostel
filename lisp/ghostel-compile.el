@@ -472,6 +472,25 @@ an echoed copy of the command (which users already see in the
 header).  `sane' in the baseline turns echo on; the trailing
 `-echo' overrides it.")
 
+(defun ghostel-compile--process-command (shell switch command height width
+                                               &optional remote-p)
+  "Return the `make-process' command list for a compile PTY.
+On POSIX locals and all remote spawns, wrap SHELL in `/bin/sh -c' so
+`stty' can configure the PTY before `exec'.  On local Windows spawns,
+run SHELL directly with SWITCH and COMMAND because the POSIX wrapper is
+unavailable there."
+  (if (ghostel--use-posix-pty-wrapper-p remote-p)
+      (list "/bin/sh" "-c"
+            (concat
+             "stty " ghostel-compile--stty-flags
+             (format " rows %d columns %d" height width)
+             " 2>/dev/null; "
+             "exec "
+             (shell-quote-argument shell) " "
+             (shell-quote-argument switch) " "
+             (shell-quote-argument command)))
+    (list shell switch command)))
+
 (defun ghostel-compile--spawn (command buffer height width)
   "Spawn COMMAND in BUFFER via a PTY sized HEIGHT rows by WIDTH columns.
 Installs `ghostel--filter' and `ghostel-compile--sentinel'.  Returns
@@ -479,9 +498,10 @@ the process.
 
 COMMAND is passed verbatim to `shell-file-name' via
 `shell-command-switch', so multi-line scripts and shell
-metacharacters are handled the same way `M-x compile' handles
-them.  `/bin/sh' is used only to set PTY attributes (stty) before
-exec'ing the user's shell.
+ metacharacters are handled the same way `M-x compile' handles
+ them.  On POSIX locals and remote spawns, `/bin/sh' is used only to
+ set PTY attributes (`stty') before exec'ing the user's shell; local
+ Windows spawns invoke the user's shell directly.
 
 For remote (TRAMP) `default-directory's, `shell-file-name' and
 `shell-command-switch' are resolved via `with-connection-local-variables'
@@ -495,15 +515,8 @@ local machine happens to have)."
                      (with-connection-local-variables shell-command-switch)
                    shell-command-switch))
          (wrapper
-          (list "/bin/sh" "-c"
-                (concat
-                 "stty " ghostel-compile--stty-flags
-                 (format " rows %d columns %d" height width)
-                 " 2>/dev/null; "
-                 "exec "
-                 (shell-quote-argument shell) " "
-                 (shell-quote-argument switch) " "
-                 (shell-quote-argument command))))
+          (ghostel-compile--process-command
+           shell switch command height width remote-p))
          (process-environment
           (append compilation-environment
                   ghostel-environment
