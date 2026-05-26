@@ -2690,6 +2690,46 @@ Set by `ghostel-default-progress' / `ghostel-spinner-progress'.
 Composed with `ghostel--mode-line-tag' (and the spinner
 construct, when active) by `ghostel--mode-line-refresh'.")
 
+(defun ghostel--mode-line-tag-mouse-exit (event)
+  "Mouse-1 handler on the input-mode mode-line tag.
+EVENT is the mouse event that triggered the click.  Read-only modes return
+to the pre-readonly mode; char and line modes return to semi-char."
+  (interactive "e")
+  (with-selected-window (posn-window (event-start event))
+    (pcase ghostel--input-mode
+      ((or 'copy 'emacs) (ghostel-readonly-exit))
+      ((or 'char 'line)  (ghostel-semi-char-mode)))))
+
+(defvar ghostel--mode-line-tag-mouse-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mode-line mouse-1] #'ghostel--mode-line-tag-mouse-exit)
+    map)
+  "Keymap attached to the input-mode tag in `mode-line-process'.")
+
+(defun ghostel--mode-line-tag-help-echo-text (mode)
+  "Return current help-echo text for the input MODE mode-line tag.
+MODE is one of `char', `line', `copy', `emacs'."
+  (substitute-command-keys
+   (pcase mode
+     ('char
+      "Ghostel char-mode: \\<ghostel-char-mode-map>\\[ghostel-semi-char-mode] or mouse-1 to exit")
+     ('line
+      "Ghostel line-mode: \\<ghostel-line-mode-map>\\[ghostel-semi-char-mode] or mouse-1 to exit")
+     ((or 'copy 'emacs)
+      (let ((name (if (eq mode 'copy) "copy" "emacs"))
+            (exit (if ghostel-readonly-fast-exit
+                      "\\`q' / \\`C-g' / mouse-1 to exit"
+                    "\\<ghostel-mode-map>\\[ghostel-semi-char-mode] or mouse-1 to exit")))
+        (format "Ghostel %s-mode: %s" name exit))))))
+
+(defun ghostel--mode-line-tag-make (mode label)
+  "Return LABEL propertized as a clickable mode-line tag for MODE."
+  (propertize label
+              'help-echo (lambda (&rest _)
+                           (ghostel--mode-line-tag-help-echo-text mode))
+              'mouse-face 'mode-line-highlight
+              'local-map ghostel--mode-line-tag-mouse-map))
+
 (defun ghostel--mode-line-refresh ()
   "Recompute `mode-line-process' from tag + spinner + progress.
 Composes `ghostel--mode-line-tag', the spinner construct (when
@@ -2863,7 +2903,7 @@ Even keys listed in `ghostel-keymap-exceptions' (\\`C-c', \\`C-x',
     ;; `ghostel-char-mode-map' got a chance).
     (setq ghostel--char-mode-override-active t)
     (use-local-map ghostel-char-mode-map)
-    (setq ghostel--mode-line-tag ":Char")
+    (setq ghostel--mode-line-tag (ghostel--mode-line-tag-make 'char ":Char"))
     (ghostel--mode-line-refresh)
     (when ghostel--term
       (setq ghostel--snap-requested t)
@@ -2924,7 +2964,7 @@ a non-read-only mode."
         (ghostel--invalidate)))
     (setq ghostel--input-mode mode)
     (use-local-map (ghostel--readonly-keymap))
-    (setq ghostel--mode-line-tag label)
+    (setq ghostel--mode-line-tag (ghostel--mode-line-tag-make mode label))
     (ghostel--mode-line-refresh)
     (ghostel--fake-cursor-update)))
 
@@ -3420,7 +3460,7 @@ in line mode (the interactive entry validates these)."
       (setq ghostel--char-mode-override-active nil)
       (setq ghostel--input-mode 'line)
       (use-local-map ghostel-line-mode-map)
-      (setq ghostel--mode-line-tag ":Line")
+      (setq ghostel--mode-line-tag (ghostel--mode-line-tag-make 'line ":Line"))
       (ghostel--mode-line-refresh)
       ;; Protect everything before the input marker with a read-only
       ;; text property so commands that would modify the buffer

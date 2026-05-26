@@ -471,6 +471,93 @@ unlike semi-char mode where it tracks the terminal cursor."
               (should (null mode-line-process)))))
       (kill-buffer buf))))
 
+(ert-deftest ghostel-test-mode-line-tag-make ()
+  "`ghostel--mode-line-tag-make' propertizes the tag for every input mode."
+  (dolist (case '((char  ":Char"  "char-mode")
+                  (line  ":Line"  "line-mode")
+                  (copy  ":Copy"  "copy-mode")
+                  (emacs ":Emacs" "emacs-mode")))
+    (pcase-let* ((`(,mode ,label ,needle) case)
+                 (tag (ghostel--mode-line-tag-make mode label)))
+      ;; `equal' is property-blind, so existing string assertions still hold.
+      (should (equal tag label))
+      ;; mouse-face + local-map are static properties.
+      (should (eq (get-text-property 0 'mouse-face tag) 'mode-line-highlight))
+      (should (eq (get-text-property 0 'local-map tag)
+                  ghostel--mode-line-tag-mouse-map))
+      ;; help-echo is a function (re-renders on each hover).
+      (let* ((he (get-text-property 0 'help-echo tag))
+             (text (funcall he nil tag 0)))
+        (should (functionp he))
+        (should (stringp text))
+        (should (string-match-p (regexp-quote needle) text))
+        (should (string-match-p "mouse-1" text))))))
+
+(ert-deftest ghostel-test-mode-line-tag-help-echo-respects-fast-exit ()
+  "Copy/Emacs tooltips list `q'/`C-g' only when `ghostel-readonly-fast-exit' is on."
+  (let ((ghostel-readonly-fast-exit t))
+    (dolist (mode '(copy emacs))
+      (let ((text (ghostel--mode-line-tag-help-echo-text mode)))
+        (should (string-match-p "\\bq\\b" text))
+        (should (string-match-p "C-g" text)))))
+  (let ((ghostel-readonly-fast-exit nil))
+    (dolist (mode '(copy emacs))
+      (let ((text (ghostel--mode-line-tag-help-echo-text mode)))
+        ;; Without fast-exit, q is not an exit key — must not appear.
+        (should-not (string-match-p "\\bq\\b" text))
+        ;; The way out is the semi-char-mode binding (C-c C-j by default).
+        (should (string-match-p "C-c C-j" text))))))
+
+(ert-deftest ghostel-test-mode-line-tag-integration ()
+  "Entering char/copy/emacs sets `mode-line-process' to the propertized tag."
+  (let ((buf (generate-new-buffer " *ghostel-test-mode-line-tag*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (ghostel-mode)
+          (let ((ghostel--term 'fake))
+            (cl-letf (((symbol-function 'ghostel--invalidate) #'ignore)
+                      ((symbol-function 'ghostel--scroll-bottom) #'ignore))
+              (dolist (case '((ghostel-char-mode  . ":Char")
+                              (ghostel-emacs-mode . ":Emacs")
+                              (ghostel-copy-mode  . ":Copy")))
+                (funcall (car case))
+                (should (equal mode-line-process (cdr case)))
+                (should (functionp (get-text-property 0 'help-echo
+                                                     mode-line-process)))
+                (ghostel-semi-char-mode)
+                (should (null mode-line-process))))))
+      (kill-buffer buf))))
+
+(ert-deftest ghostel-test-mode-line-tag-mouse-exit ()
+  "`mouse-1' on the tag exits char/line to semi-char and copy/emacs to previous."
+  (let ((buf (generate-new-buffer " *ghostel-test-mode-line-tag-mouse*")))
+    (unwind-protect
+        (with-current-buffer buf
+          (ghostel-mode)
+          (set-window-buffer (selected-window) buf)
+          (let ((ghostel--term 'fake)
+                (event `(mouse-1 (,(selected-window) mode-line (0 . 0) 0))))
+            (cl-letf (((symbol-function 'ghostel--invalidate) #'ignore)
+                      ((symbol-function 'ghostel--scroll-bottom) #'ignore)
+                      ((symbol-function 'ghostel-force-redraw) #'ignore))
+              ;; Char mode → semi-char on click.
+              (ghostel-char-mode)
+              (should (eq ghostel--input-mode 'char))
+              (ghostel--mode-line-tag-mouse-exit event)
+              (should (eq ghostel--input-mode 'semi-char))
+              ;; Emacs mode → semi-char (its previous mode) on click.
+              (ghostel-emacs-mode)
+              (should (eq ghostel--input-mode 'emacs))
+              (ghostel--mode-line-tag-mouse-exit event)
+              (should (eq ghostel--input-mode 'semi-char))
+              ;; Copy mode → semi-char on click.  Freezes the terminal,
+              ;; so the readonly exit path resumes redraws (stubbed).
+              (ghostel-copy-mode)
+              (should (eq ghostel--input-mode 'copy))
+              (ghostel--mode-line-tag-mouse-exit event)
+              (should (eq ghostel--input-mode 'semi-char)))))
+      (kill-buffer buf))))
+
 (ert-deftest ghostel-test-emacs-mode-is-unfrozen ()
   "Emacs mode leaves the terminal live so redraws keep running."
   (let ((buf (generate-new-buffer " *ghostel-test-emacs-live*")))
