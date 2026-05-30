@@ -794,6 +794,44 @@ is not in semi-char-mode when the drag completes."
                  (const :tag "Emacs mode"          emacs)
                  (const :tag "Do not switch"       nil)))
 
+(defcustom ghostel-word-boundary-string " \t\"'`|:;,()[]{}<>$│"
+  "Characters that terminate words in ghostel buffers.
+
+Mirrors Ghostty's `selection-word-chars' default.  Characters not listed
+here are word constituents, so double-click selects whole hostnames
+\(`api.example.com') and paths (`~/src/foo/bar.txt').
+
+The value is realized into `ghostel-mode-syntax-table', which drives mouse
+word selection and word-based motion/search.
+Use `setopt' or `customize-set-variable' so the table is rebuilt."
+  :type 'string
+  :initialize #'custom-initialize-default
+  :set (lambda (sym newval)
+         (set-default sym newval)
+         (when (boundp 'ghostel-mode-syntax-table)
+           (ghostel--rebuild-mode-syntax-table))))
+
+(defvar ghostel-mode-syntax-table (make-syntax-table)
+  "Syntax table for `ghostel-mode'.")
+
+(defun ghostel--rebuild-mode-syntax-table ()
+  "Realize `ghostel-word-boundary-string' into `ghostel-mode-syntax-table'.
+
+Mutates the table in place, so live ghostel buffers keep their
+buffer-local syntax-table reference and see customization changes.
+
+Printable ASCII starts as word syntax; configured boundaries become plain
+punctuation.  Keeping boundaries as `.' (not paren/string syntax) prevents
+double-click selection from invoking `forward-sexp'.
+Whitespace keeps whitespace syntax."
+  (cl-loop for ch from ?! to ?~
+           do (modify-syntax-entry ch "w" ghostel-mode-syntax-table))
+  (dolist (ch (string-to-list ghostel-word-boundary-string))
+    (unless (memq ch '(?\s ?\t ?\n ?\r ?\f ?\v))
+      (modify-syntax-entry ch "." ghostel-mode-syntax-table))))
+
+(ghostel--rebuild-mode-syntax-table)
+
 (defcustom ghostel-scroll-on-input t
   "Automatically scroll to the bottom when typing in the terminal.
 When non-nil, any character typed while the viewport is scrolled
