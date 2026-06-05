@@ -461,7 +461,7 @@ for static env entries that don't depend on runtime state."
 Each entry is (NAME FUNCTION) where NAME is the string sent from
 the shell and FUNCTION is the Elisp function to invoke.
 All arguments are passed as strings."
-  :type '(alist :key-type string :value-type function))
+  :type '(repeat (list (string :tag "Name") (function :tag "Function"))))
 
 (defcustom ghostel-enable-osc52 nil
   "Allow terminal applications to set the clipboard via OSC 52.
