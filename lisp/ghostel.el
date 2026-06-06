@@ -3385,6 +3385,10 @@ bar below the prompt — stays untouched."
                                (<= mark-pos end-pos)
                                (- mark-pos start-pos)))
              (input (buffer-substring-no-properties start-pos end-pos)))
+        ;; Disarm undo for the rest of the redraw pass: this delete, the
+        ;; native redraw, and the re-insert in `ghostel--line-mode-restore'
+        ;; are renderer bookkeeping, not user edits.  `restore' re-arms.
+        (setq buffer-undo-list t)
         (let ((inhibit-read-only t))
           (delete-region start-pos end-pos))
         (list :input input
@@ -3404,7 +3408,9 @@ status bar)."
   (when snapshot
     (let ((prompt-end (ghostel-input-start-point)))
       (when prompt-end
+        ;; Keep the re-insert out of the undo list.
         (let ((inhibit-read-only t)
+              (buffer-undo-list t)
               (input (plist-get snapshot :input)))
           (ghostel--line-mode-trim-trailing-blank prompt-end)
           (when (markerp ghostel--line-input-start)
@@ -3437,6 +3443,9 @@ status bar)."
                 (goto-char (+ start-pos po)))
               (when mo
                 (set-mark (+ start-pos mo))))))
+        ;; Re-arm an empty history at the input's new location; the old
+        ;; positions are stale now the redraw has moved it.
+        (setq buffer-undo-list nil)
         t))))
 
 (defun ghostel--line-mode-enter ()
@@ -3525,6 +3534,9 @@ in line mode (the interactive entry validates these)."
       ;; Place point at end of (any adopted) input so the user
       ;; continues typing where the shell left them.
       (goto-char (marker-position ghostel--line-input-end))
+      ;; Arm undo recording now that the entry plumbing is done, so the
+      ;; user's first edit is the first thing recorded.
+      (setq buffer-undo-list nil)
       (ghostel--line-mode-maybe-prespawn-bash-completion)
       t)))
 
@@ -3633,6 +3645,9 @@ skip the readline-clearing backspaces (the alt-screen TUI would
 receive them), and skip the trailing redraw — used by
 `ghostel--line-mode-pause' which has already snapshotted the input
 and is running inside `ghostel--redraw-now'."
+  ;; Undo is off outside line mode; disable it before the teardown edits
+  ;; below so none of them are recorded.
+  (setq buffer-undo-list t)
   (unless pause
     (let ((input (ghostel--line-mode-input-text)))
       ;; Erase the adopted prefix from the shell's readline before
@@ -3778,7 +3793,9 @@ input marker to wherever the new prompt lands."
     (when (and ghostel--process (process-live-p ghostel--process))
       (when (> (length input) 0)
         (process-send-string ghostel--process input))
-      (ghostel--send-encoded "return" ""))))
+      (ghostel--send-encoded "return" ""))
+    ;; Drop this line's undo history so the next line starts clean.
+    (setq buffer-undo-list nil)))
 
 (defun ghostel-line-mode-interrupt ()
   "Discard local input and send SIGINT (\\`C-c') to the shell.
@@ -3791,6 +3808,8 @@ marker."
   ;; C-c discards readline's input buffer shell-side, so any adopted
   ;; prefix is gone — just zero our count, no backspaces needed.
   (setq ghostel--line-mode-adopted-count 0)
+  ;; The line is discarded; clear its undo history too (mirrors send).
+  (setq buffer-undo-list nil)
   (when (and ghostel--process (process-live-p ghostel--process))
     (process-send-string ghostel--process "\C-c")))
 
