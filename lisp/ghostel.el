@@ -4149,6 +4149,16 @@ semi-char/char mode never hijacks the key away from the PTY."
   (let ((uri (get-text-property pos 'help-echo)))
     (and (stringp uri) uri)))
 
+(defun ghostel--eldoc-link (callback &rest _)
+  "Report the hyperlink URI at point via eldoc CALLBACK.
+For `eldoc-documentation-functions'."
+  (when-let* (((eq (get-text-property (point) 'keymap) ghostel-link-map))
+              (uri (ghostel--uri-at-pos (point)))
+              (link (if (string-prefix-p "fileref:" uri)
+                        (substring uri (length "fileref:"))
+                      uri)))
+    (funcall callback link :thing "Link" :face 'link)))
+
 (defun ghostel--open-link (url)
   "Open URL, dispatching by scheme.
 file:// URIs open in Emacs; http(s) and other schemes use `browse-url'.
@@ -4261,6 +4271,9 @@ Wraps to `point-max' when no link is found before point."
     (ghostel-copy-mode))
   (dotimes (_ (or n 1))
     (ghostel--goto-hyperlink 'previous)))
+
+;; Make the ghostel-*-hyperlink play nice with eldoc.
+(eldoc-add-command #'ghostel-next-hyperlink #'ghostel-previous-hyperlink)
 
 (defun ghostel--detect-urls-skip-p (pos active-bounds)
   "Return non-nil if link detection should leave POS alone.
@@ -6423,6 +6436,8 @@ a Ghostel window making it lose its anchoring."
   (add-hook 'window-size-change-functions #'ghostel--anchor-on-resize nil t)
   (add-hook 'activate-mark-hook #'ghostel--mark-activated nil t)
   (add-hook 'minibuffer-exit-hook #'ghostel--minibuffer-exit)
+  ;; Show the hyperlink URI at point in eldoc.
+  (add-hook 'eldoc-documentation-functions #'ghostel--eldoc-link nil t)
   (ghostel--suppress-interfering-modes)
   (ghostel-imenu-setup)
   (setq ghostel--scroll-intercept-active t)
