@@ -245,7 +245,7 @@ pub fn encodeFocus(self: *Self, gained: bool) !bool {
 /// get promoted to scrollback due to vertical shrinking of the viewport.
 pub fn resize(self: *Self, cols: u16, rows: u16, cell_w: u16, cell_h: u16) !void {
     self.lockTerm();
-    self.renderer.resize(cols, rows, cell_w, cell_h);
+    try self.renderer.resize(cols, rows, cell_w, cell_h);
     self.unlockTerm();
 }
 

@@ -104,7 +104,11 @@ pub fn deinit(self: *Self, alloc: Allocator) void {
     if (self.font_info) |*fi| fi.deinit(alloc);
 }
 
-pub fn resize(self: *Self, cols: u16, rows: u16, cell_w: u32, cell_h: u32) void {
+pub fn resize(self: *Self, cols: u16, rows: u16, cell_w: u32, cell_h: u32) !void {
+    if (cols == 0 or rows == 0 or cell_w == 0 or cell_h == 0) {
+        return error.InvalidSize;
+    }
+
     self.pending_resize = .{
         .cols = cols,
         .rows = rows,
