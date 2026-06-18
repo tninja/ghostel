@@ -7,6 +7,7 @@ const c = @cImport({
     @cInclude("stdlib.h");
     @cInclude("fcntl.h");
     @cInclude("sys/ioctl.h");
+    @cInclude("sys/wait.h");
 });
 
 const Self = @This();

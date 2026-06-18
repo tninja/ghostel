@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.35.1] — 2026-06-18
+
+### Fixed
+- FreeBSD native PTY builds now include `<sys/wait.h>`, exposing `WEXITSTATUS`
+  during Zig C translation so the `x86_64-freebsd` release artifact builds.
+
+### Internal
+- The native CI build matrix now includes `x86_64-freebsd`, matching the
+  release artifact matrix.
+
 ## [0.35.0] — 2026-06-18
 
 ### Added
