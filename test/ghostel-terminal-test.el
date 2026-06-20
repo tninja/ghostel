@@ -453,5 +453,47 @@ state from the wrong buffer after feeding output to the native module."
             (should (equal cursor-type 'box))))  ; unchanged
       (kill-buffer buf))))
 
+(ert-deftest ghostel-test-cursor-blink ()
+  "A blinking cursor request starts the blink timer; steady cancels it."
+  (let ((buf (generate-new-buffer " *ghostel-test-cursor-blink*")))
+    (unwind-protect
+        ;; Pretend we are on a graphical display and the user has the
+        ;; global blink off, so `ghostel--cursor-blink-start' engages.
+        (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t)))
+          (with-current-buffer buf
+            (ghostel-mode)
+            (let ((blink-cursor-mode nil))
+              ;; Blinking block requested -> timer running, box shape,
+              ;; and both blink hooks installed buffer-locally.
+              (setq ghostel--cursor-blinking t)
+              (setq ghostel--cursor-style 1)
+              (ghostel--apply-cursor-style)
+              (should (equal cursor-type 'box))
+              (should (timerp ghostel--cursor-blink-timer))
+              (should (memq #'ghostel--cursor-blink-restore-window
+                            window-buffer-change-functions))
+              (should (memq #'ghostel--cursor-blink-stop kill-buffer-hook))
+              ;; Steady request -> timer cancelled and hooks removed.
+              (setq ghostel--cursor-blinking nil)
+              (setq ghostel--cursor-style 1)
+              (ghostel--apply-cursor-style)
+              (should-not ghostel--cursor-blink-timer)
+              (should-not (memq #'ghostel--cursor-blink-restore-window
+                                window-buffer-change-functions))
+              (should-not (memq #'ghostel--cursor-blink-stop kill-buffer-hook))
+              ;; Blinking again, then hidden cursor -> cancelled, hooks gone.
+              (setq ghostel--cursor-blinking t)
+              (setq ghostel--cursor-style 0)
+              (ghostel--apply-cursor-style)
+              (should (timerp ghostel--cursor-blink-timer))
+              (setq ghostel--cursor-style nil)
+              (ghostel--apply-cursor-style)
+              (should-not ghostel--cursor-blink-timer)
+              (should-not (memq #'ghostel--cursor-blink-restore-window
+                                window-buffer-change-functions)))))
+      ;; `kill-buffer' runs the buffer-local `kill-buffer-hook' that
+      ;; `ghostel--cursor-blink-start' installs, cancelling any timer.
+      (kill-buffer buf))))
+
 (provide 'ghostel-terminal-test)
 ;;; ghostel-terminal-test.el ends here

@@ -169,7 +169,10 @@ ORIG-FN is the advised setter (STYLE, VISIBLE); deferred to in alt-screen."
   (if (and evil-ghostel-mode
            ghostel--term
            (not (ghostel--mode-enabled ghostel--term 1049)))
-      (evil-refresh-cursor)
+      ;; Evil owns the cursor now; end any terminal-driven blink that a
+      ;; full-screen app left running before we exited the alt-screen.
+      (progn (ghostel--cursor-blink-stop)
+             (evil-refresh-cursor))
     (funcall orig-fn)))
 
 

@@ -1560,6 +1560,21 @@ Matches Ghostty 1.2.0's `bold-color' configuration."
 (defvar-local ghostel--cursor-pos nil
   "The terminal cursor as (COL . ROW) in viewport-relative coordinates.")
 
+(defvar-local ghostel--cursor-blinking nil
+  "Non-nil when the terminal requests a blinking cursor.
+Published by the renderer alongside `ghostel--cursor-style' and read by
+`ghostel--apply-cursor-style'.")
+
+(defvar-local ghostel--cursor-blink-timer nil
+  "Repeating timer blinking the terminal cursor, or nil when steady.")
+
+(defvar-local ghostel--cursor-blink-window nil
+  "Window whose cursor the blink timer last toggled.
+Tracked so the cursor can be restored there even after this buffer
+stops being displayed in it; `internal-show-cursor' sets a
+per-window flag, so a window left in the blink's \"off\" phase would
+otherwise hide its cursor for whatever buffer it shows next.")
+
 (defvar-local ghostel--cursor-char-pos nil
   "The position of the terminal cursor in the buffer.")
 
@@ -2833,6 +2848,7 @@ OSC 9;4 packet, and same-value packets must not fire FMLU."
 Saves the cursor style, re-enables `hl-line-mode' if it was
 suppressed, and sets the buffer read-only.  Does NOT cancel the
 redraw timer — that is the caller's job when freezing."
+  (ghostel--cursor-blink-stop)
   (setq ghostel--saved-cursor-type cursor-type)
   (setq cursor-type (default-value 'cursor-type))
   (when ghostel--saved-hl-line-mode
@@ -3547,6 +3563,7 @@ in line mode (the interactive entry validates these)."
       ;; running terminal app issued in semi-char/char mode.
       ;; `ghostel--apply-cursor-style' is a no-op in line mode, so
       ;; further terminal requests are ignored until teardown.
+      (ghostel--cursor-blink-stop)
       (setq ghostel--line-mode-saved-cursor-type (list cursor-type))
       (setq cursor-type (default-value 'cursor-type))
       ;; Force full redraws while line mode is active so the
@@ -5120,11 +5137,69 @@ Maps TITLE through `ghostel-buffer-name-function' and renames via
   (when ghostel-buffer-name-function
     (ghostel--rename-managed (funcall ghostel-buffer-name-function title))))
 
+(defun ghostel--cursor-blink-stop ()
+  "Cancel the blink timer, restore the cursor, and remove the blink hooks.
+Restores via `ghostel--cursor-blink-window' rather than this buffer's
+current window, which may already show another buffer."
+  (when ghostel--cursor-blink-timer
+    (cancel-timer ghostel--cursor-blink-timer)
+    (setq ghostel--cursor-blink-timer nil))
+  (when (window-live-p ghostel--cursor-blink-window)
+    (internal-show-cursor ghostel--cursor-blink-window t))
+  (setq ghostel--cursor-blink-window nil)
+  (remove-hook 'window-buffer-change-functions
+               #'ghostel--cursor-blink-restore-window t)
+  (remove-hook 'kill-buffer-hook #'ghostel--cursor-blink-stop t))
+
+(defun ghostel--cursor-blink-restore-window (window)
+  "Show WINDOW's cursor after this buffer enters or leaves it.
+A buffer-local `window-buffer-change-functions' entry.  The blink sets
+a per-window \"cursor off\" flag via `internal-show-cursor', which would
+hide the cursor of whatever buffer the window shows next.  The restore
+is deferred to a 0-delay timer because `internal-show-cursor' is inert
+during redisplay, which is when these functions run."
+  (run-at-time 0 nil
+               (lambda ()
+                 (when (window-live-p window)
+                   (internal-show-cursor window t)))))
+
+(defun ghostel--cursor-blink-tick (buffer)
+  "Toggle BUFFER's cursor visibility.
+Self-stops when BUFFER is no longer the selected window or has
+left terminal input mode, so the navigation cursor stays solid."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let ((win (get-buffer-window buffer)))
+        (if (and win
+                 (eq win (selected-window))
+                 (ghostel--buffer-editable-p))
+            (progn
+              (setq ghostel--cursor-blink-window win)
+              (internal-show-cursor win (not (internal-show-cursor-p win))))
+          (ghostel--cursor-blink-stop))))))
+
+(defun ghostel--cursor-blink-start ()
+  "Begin blinking the cursor.
+No-op on text terminals, when already blinking, or when the global
+`blink-cursor-mode' already drives the blink (avoids a double beat)."
+  (when (and (display-graphic-p)
+             (not ghostel--cursor-blink-timer)
+             (not blink-cursor-mode))
+    (add-hook 'kill-buffer-hook #'ghostel--cursor-blink-stop nil t)
+    ;; Restore the cursor when the blinked window switches buffers, so a window
+    ;; left in the blink's "off" phase never hides the next buffer's cursor.
+    (add-hook 'window-buffer-change-functions
+              #'ghostel--cursor-blink-restore-window nil t)
+    (setq ghostel--cursor-blink-window (selected-window))
+    (setq ghostel--cursor-blink-timer
+          (run-with-timer blink-cursor-interval blink-cursor-interval
+                          #'ghostel--cursor-blink-tick (current-buffer)))))
+
 (defun ghostel--apply-cursor-style ()
-  "Apply the terminal cursor style published by the native renderer.
-The renderer owns discovering terminal cursor state, but cursor
-application is intentionally kept in Elisp so input modes and
-integrations can decide whether `cursor-type' should change."
+  "Apply the cursor style and blink published by the native renderer.
+Kept in Elisp so input modes and integrations can decide whether
+`cursor-type' should change.  Reads the buffer-local
+`ghostel--cursor-style' and `ghostel--cursor-blinking'."
   (when (and (ghostel--buffer-editable-p)
              (not ghostel-ignore-cursor-change))
     (setq cursor-type
@@ -5134,7 +5209,10 @@ integrations can decide whether `cursor-type' should change."
 			(2 '(hbar . 2))      ; underline
 			(3 'hollow)          ; hollow block
 			('nil nil)
-			(_ 'box)))))
+			(_ 'box)))
+    (if (and ghostel--cursor-style ghostel--cursor-blinking)
+        (ghostel--cursor-blink-start)
+      (ghostel--cursor-blink-stop))))
 
 (defun ghostel--update-directory (dir)
   "Update `default-directory' from terminal's OSC 7 report.

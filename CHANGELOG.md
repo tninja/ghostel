@@ -15,6 +15,11 @@ All notable changes to this project will be documented in this file.
   `ghostel-maybe-leave-input` to their after-jump hook or as `:after` advice.
   Mouse selection and region activation keep their independent
   `ghostel-mouse-drag-input-mode` / `ghostel-mark-activation-input-mode` knobs.
+- Blinking cursor support. A terminal app that requests a blinking cursor
+  (DECSCUSR `CSI 5/3/1 SP q`, i.e. mode 12) now blinks the cursor in the Emacs
+  buffer instead of rendering it steady. Works for the bar, block, and
+  underline shapes. Yields to the global `blink-cursor-mode` when that is
+  enabled (no double-blink); graphical frames only.
 
 ### Changed
 - Internal libghostty VT-parser warnings no longer leak to the module's

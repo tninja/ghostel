@@ -578,7 +578,7 @@ read-only buffer (Emacs or copy).
 - *OSC 9 / OSC 777* - desktop notifications and ConEmu progress reports (see
   [[#notifications-and-progress][Notifications and Progress]]).
 - Text attributes: bold, italic, faint, underline (single/double/curly/dotted/dashed, with color), strikethrough, inverse.
-- Cursor styles: block, bar, underline, hollow block.
+- Cursor styles: block, bar, underline, hollow block - each steady or blinking.
 - Alternate screen buffer (for TUI apps like htop, vim, etc.).
 - Scrollback buffer (configurable, default 5 MB / ~5,000 lines, materialized
   into the Emacs buffer so =isearch= / =consult-line= work over history).
@@ -1806,7 +1806,8 @@ while ghostel and vterm trade a compile step for a C/Zig engine.
 | Underline styles              | 5 types | ❌       | curly    |
 | Colored underline             | ✅      | ❌       | ✅       |
 | Strikethrough                 | ✅      | ✅       | ✅       |
-| Cursor styles                 | 4       | 3        | 7        |
+| Cursor shapes                 | 4       | 3        | 3        |
+| Blinking cursor               | ✅      | partial  | ✅       |
 |-------------------------------+---------+----------+----------|
 | Kitty graphics (images)       | ✅      | ❌       | ❌       |
 | Sixel graphics                | ❌      | ❌       | ✅       |

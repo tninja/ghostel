@@ -440,6 +440,7 @@ const interned_symbols = [_][:0]const u8{
     "fset",
     "get-buffer-window-list",
     "ghostel",
+    "ghostel--cursor-blinking",
     "ghostel--cursor-char-pos",
     "ghostel--cursor-pos",
     "ghostel--cursor-style",

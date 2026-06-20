@@ -937,6 +937,8 @@ fn renderCursor(self: *Self, env: emacs.Env) !void {
         _ = env.set("ghostel--cursor-pos", env.nil());
     }
 
+    _ = env.set("ghostel--cursor-blinking", if (self.render_state.cursor.blinking) env.t() else env.nil());
+
     if (self.render_state.cursor.visible) {
         env.set(
             "ghostel--cursor-style",
