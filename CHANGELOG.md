@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.36.0] — 2026-06-21
+
 ### Added
 - `isearch` and minibuffer navigation (`consult-line`, etc.) in semi-char mode
   now switch to a read-only mode when they leave you parked in the scrollback,
@@ -22,6 +24,11 @@ All notable changes to this project will be documented in this file.
   enabled (no double-blink); graphical frames only.
 
 ### Changed
+- Programs launched by Ghostel are now resolved through Emacs's `exec-path`
+  (bare names) and `default-directory` (names with a directory component)
+  before being spawned, instead of relying on the child inheriting `PATH`.
+  The resolved binary now matches what other Emacs commands (`executable-find`,
+  `M-x compile`, …) would find, and remote TRAMP buffers are unaffected.
 - Internal libghostty VT-parser warnings no longer leak to the module's
   stderr in release builds. In a terminal Emacs (`emacs -nw`) that stderr is
   the controlling tty, so the warnings were painted onto the screen outside
@@ -29,6 +36,12 @@ All notable changes to this project will be documented in this file.
   stale line near the mode line after running lazygit (#425). Such logs are
   now available only via `M-x ghostel-debug-start` (`*ghostel-debug*`);
   debug builds keep console output as before.
+
+### Internal
+- Cursor style (shape) is now driven from Elisp rather than the Zig renderer,
+  unifying cursor control with the new blink support.
+- The forked child now writes via `posix.write` instead of a Zig buffered
+  writer, keeping the post-fork / pre-exec path async-signal-safe.
 
 ## [0.35.4] — 2026-06-19
 
