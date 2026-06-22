@@ -228,17 +228,25 @@ README for the full design and per-call escape hatch."
     ("scp" login-shell)
     ("docker" "/bin/sh"))
   "Shell to use for remote TRAMP connections, per method.
-Each entry is (TRAMP-METHOD SHELL [FALLBACK]).  TRAMP-METHOD is a
+Each entry is (TRAMP-METHOD SHELL [FALLBACK [ARG...]]).  TRAMP-METHOD is a
 method string such as \"ssh\" or \"docker\", or t as a catch-all default.
 
-SHELL is either a path string like \"/bin/bash\" or the symbol
-`login-shell' to auto-detect the remote user's login shell via
-`getent passwd'.  FALLBACK, when present, is used when login-shell
-detection fails."
+SHELL is either a path string like \"/bin/bash\" or the symbol `login-shell'
+to auto-detect the remote user's login shell via `getent passwd'.
+FALLBACK, when present, is used when login-shell detection fails.
+
+Any elements after FALLBACK are extra arguments passed to the shell.
+When none are given, ghostel supplies a type-aware default: recognized shells
+\(bash, zsh, fish) are started as login+interactive shells (`-l -i') so they
+source the user's rc/profile files, mirroring an interactive `ssh host' login.
+Unrecognized shells (e.g. /bin/sh) get no args.
+To override, list the arguments explicitly after FALLBACK,
+e.g. (\"ssh\" login-shell nil \"-i\")."
   :type '(alist :key-type (choice string (const t))
                 :value-type
-                (list (choice string (const login-shell))
-                      (choice (const :tag "No fallback" nil) string))))
+                (list (choice :tag "Shell" string (const login-shell))
+                      (choice :tag "Fallback" (const :tag "None" nil) string)
+                      (repeat :inline t :tag "Extra arguments" string))))
 
 (defcustom ghostel-max-scrollback (* 5 1024 1024)  ; 5MB
   "Maximum scrollback size in bytes.
@@ -3801,26 +3809,34 @@ EVENT is the state-change description passed by Emacs."
              host nil nil
              (car (split-string (system-name) "\\.")) nil nil t))))
 
-(defun ghostel--tramp-get-shell (method)
-  "Get the shell for TRAMP METHOD from `ghostel-tramp-shells'.
-METHOD is a TRAMP method string or t for the default."
+(defun ghostel--tramp-shell-spec (method)
+  "Return (PROGRAM . EXTRA-ARGS) for TRAMP METHOD from `ghostel-tramp-shells'.
+METHOD is a TRAMP method string or t for the default.
+PROGRAM is the shell path: either the configured string or, for the
+`login-shell' symbol, the remote user's login shell auto-detected
+via `getent passwd' \(falling back to the entry's FALLBACK).
+EXTRA-ARGS are the optional arguments listed after the FALLBACK slot.
+Returns nil when no program resolves for METHOD."
   (let* ((specs (cdr (assoc method ghostel-tramp-shells)))
          (first (car specs))
-         (second (cadr specs)))
-    (if (eq first 'login-shell)
-        (let* ((entry (ignore-errors
-                        (with-output-to-string
-                          (with-current-buffer standard-output
-                            (unless (= 0 (process-file-shell-command
-                                          "getent passwd $LOGNAME"
-                                          nil (current-buffer) nil))
-                              (error "Unexpected return value"))
-                            (when (> (count-lines (point-min) (point-max)) 1)
-                              (error "Unexpected output"))))))
-               (shell (when entry
-                        (nth 6 (split-string entry ":" nil "[ \t\n\r]+")))))
-          (or shell second))
-      first)))
+         (second (cadr specs))
+         (args (cddr specs))
+         (program
+          (if (eq first 'login-shell)
+              (let* ((entry (ignore-errors
+                              (with-output-to-string
+                                (with-current-buffer standard-output
+                                  (unless (= 0 (process-file-shell-command
+                                                "getent passwd $LOGNAME"
+                                                nil (current-buffer) nil))
+                                    (error "Unexpected return value"))
+                                  (when (> (count-lines (point-min) (point-max)) 1)
+                                    (error "Unexpected output"))))))
+                     (shell (when entry
+                              (nth 6 (split-string entry ":" nil "[ \t\n\r]+")))))
+                (or shell second))
+            first)))
+    (and program (cons program args))))
 
 (defun ghostel--shell-program-and-args (spec)
   "Split a `ghostel-shell'-style SPEC into (PROGRAM . ARGS).
@@ -3832,30 +3848,33 @@ element is the program path and the remaining elements are arguments."
     (cons (car spec) (cdr spec)))
    (t (error "Invalid ghostel-shell value: %S" spec))))
 
-(defun ghostel--get-shell ()
-  "Get the shell program to run, respecting TRAMP remote connections.
-When `default-directory' is a remote TRAMP path, consult
-`ghostel-tramp-shells' for the appropriate shell.  Returns the
-executable path as a string.  When `ghostel-shell' is a list,
-only its first element (the program) is returned; use
-`ghostel--resolve-shell-spec' to also obtain the extra arguments."
-  (let ((value
-         (if (file-remote-p default-directory)
-             (with-parsed-tramp-file-name default-directory nil
-               (or (ghostel--tramp-get-shell method)
-                   (ghostel--tramp-get-shell t)
-                   (with-connection-local-variables shell-file-name)
-                   ghostel-shell))
-           ghostel-shell)))
-    (car (ghostel--shell-program-and-args value))))
+(defun ghostel--default-remote-shell-args (program &optional integration)
+  "Return default extra args for a remote shell PROGRAM.
+Recognized shells (bash, zsh, fish) start login+interactive (`-l -i') so
+remote sessions source the user's rc/profile files; unrecognized shells
+\(e.g. /bin/sh) get no args.  With INTEGRATION active, bash uses `-i'
+only (a login bash ignores the integration's `--rcfile')."
+  (pcase (ghostel--detect-shell program)
+    ('bash (if integration '("-i") '("-l" "-i")))
+    ((or 'zsh 'fish) '("-l" "-i"))
+    (_ nil)))
 
 (defun ghostel--resolve-shell-spec ()
   "Return (PROGRAM . EXTRA-ARGS) for the shell to spawn.
 For local sessions, splits `ghostel-shell' (string or list).
-For remote (TRAMP) sessions, defers to `ghostel--get-shell',
-which always returns a string — no extra args."
+For remote (TRAMP) sessions, resolves PROGRAM via `ghostel-tramp-shells'
+\(see `ghostel--tramp-shell-spec') and returns any explicit per-method
+EXTRA-ARGS configured there.  When no explicit args are configured the
+caller supplies a type-aware default; see
+`ghostel--default-remote-shell-args'."
   (if (file-remote-p default-directory)
-      (cons (ghostel--get-shell) nil)
+      (with-parsed-tramp-file-name default-directory nil
+        (let ((spec (or (ghostel--tramp-shell-spec method)
+                        (ghostel--tramp-shell-spec t))))
+          (cons (or (car spec)
+                    (with-connection-local-variables shell-file-name)
+                    (car (ghostel--shell-program-and-args ghostel-shell)))
+                (cdr spec))))
     (ghostel--shell-program-and-args ghostel-shell)))
 
 (defun ghostel--resolve-local-executable (program)
@@ -4414,7 +4433,16 @@ run the shell on the remote host."
                             ((and (eq shell-type 'bash) integration-env)
                              (list "--posix"))
                             (t nil)))
-         (shell-args (append extra-shell-args integration-args))
+         ;; Start recognized remote shells login+interactive so they (and the
+         ;; user's rc/profile) load.  When integration is active the default
+         ;; adapts per shell (bash drops `-l' to keep `--rcfile'.  Explicit
+         ;; per-method args from `ghostel-tramp-shells' override the default.
+         (shell-args (append
+                      (or extra-shell-args
+                          (and remote-p
+                               (ghostel--default-remote-shell-args
+                                shell remote-integration)))
+                      integration-args))
          (extra-env (append
                      (unless remote-p
                        (list (format "EMACS_GHOSTEL_PATH=%s" ghostel-dir)))

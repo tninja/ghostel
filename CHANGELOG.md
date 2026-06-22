@@ -13,6 +13,24 @@ All notable changes to this project will be documented in this file.
   buffer that has since moved elsewhere).
   Fixes [#447](https://github.com/dakra/ghostel/issues/447).
 
+### Changed
+- Remote (TRAMP) shells now start as login+interactive shells by default for
+  recognized shells (bash, zsh, fish), so they reliably source the user's
+  rc/profile files (`.zshrc`, `.zprofile`, …) like an interactive `ssh host`
+  login. Previously remote shells were spawned with no flags: they were never
+  login shells (so `.zprofile`/`.zlogin` were skipped), and interactivity was
+  left to the shell's own tty auto-detection — which doesn't hold on every
+  TRAMP method, so `.zshrc` could be skipped too. Passing `-l -i` explicitly
+  restores login semantics and makes interactivity reliable. This also applies
+  when remote shell integration (`ghostel-tramp-shell-integration`) is enabled,
+  so the user's own config (prompt, aliases, …) loads alongside the integration;
+  bash uses `-i` only there, since a login bash would ignore the `--rcfile` the
+  integration relies on. Unrecognized shells (e.g. `/bin/sh`) are left
+  unchanged. `ghostel-tramp-shells` entries gained an optional trailing args
+  slot — `(METHOD SHELL [FALLBACK [ARG...]])` — to override the default per
+  method.
+  Fixes [#444](https://github.com/dakra/ghostel/issues/444).
+
 ## [0.37.0] — 2026-06-21
 
 ### Added
