@@ -1475,7 +1475,11 @@ declare that variable buffer-locally so the live buffer qualifies."
   (skip-unless (and (file-executable-p "/bin/sh")
                     (file-executable-p "/bin/sleep")))
   (let* ((buf-name "*ghostel-test-kill-compilation*")
-         (command "exec /bin/sleep 30")
+         ;; Print a readiness marker, then `exec' sleep so the PTY's
+         ;; foreground process group is the long-lived sleep.  Waiting
+         ;; for the marker before `kill-compilation' avoids racing
+         ;; SIGINT against process startup on a loaded CI host.
+         (command "printf '%s\\n' GHOSTEL_KILL_READY; exec /bin/sleep 30")
          (shell-file-name "/bin/sh")
          (inhibit-message t)
          (save-some-buffers-default-predicate (lambda () nil))
@@ -1487,6 +1491,11 @@ declare that variable buffer-locally so the live buffer qualifies."
         (let ((buf (ghostel-compile--start command buf-name
                                            default-directory)))
           (with-current-buffer buf
+            (ghostel-test--wait-for
+             ghostel--process
+             (lambda ()
+               (string-match-p "GHOSTEL_KILL_READY"
+                               (ghostel--copy-all-text ghostel--term))))
             (should (process-live-p ghostel--process))
             ;; The live buffer passes `compilation-buffer-p' — which is
             ;; the gate `kill-compilation' uses.

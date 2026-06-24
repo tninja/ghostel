@@ -91,11 +91,31 @@ even when the ghostel buffer is read-only."
   (ghostel-test--redraw term)
   ghostel--cursor-pos)
 
+(defconst ghostel-test--timeout-scale
+  ;; Gate on a *positive numeric* parse, not mere presence: `getenv'
+  ;; returns "" (non-nil) for a set-but-empty var, and
+  ;; `string-to-number' maps "" and garbage to 0 — which would zero
+  ;; every timeout and fail every wait instantly.  A bad override
+  ;; falls through to the CI/default logic instead.
+  (let* ((env (getenv "GHOSTEL_TEST_TIMEOUT_SCALE"))
+         (n (and env (string-to-number env))))
+    (cond ((and n (> n 0)) n)
+          ((getenv "CI") 4)             ; GitHub Actions et al. set CI=true
+          (t 1)))
+  "Multiplier applied to every polling-wait timeout.
+Heavily-loaded CI runners (`make -jN test-native' spawns a real PTY
+child per test file in parallel) can take far longer than the local
+default to reach a predicate.  The wait helpers early-exit the moment
+their predicate holds, so a larger ceiling costs nothing on a passing
+run; only a genuinely slow startup (or a failing predicate) waits the
+extra time.  Override with the `GHOSTEL_TEST_TIMEOUT_SCALE'
+environment variable (must parse to a positive number).")
+
 (defun ghostel-test--wait-for (proc pred &optional timeout)
   "Poll PROC until PRED returns non-nil, or TIMEOUT seconds (default 5).
 Signal an ERT failure if TIMEOUT is reached or PROC exits before PRED
-succeeds."
-  (let* ((timeout (or timeout 5))
+succeeds.  TIMEOUT is scaled by `ghostel-test--timeout-scale'."
+  (let* ((timeout (* (or timeout 5) ghostel-test--timeout-scale))
          (deadline (+ (float-time) timeout))
          result)
     (while (and (not (setq result (funcall pred)))
@@ -284,8 +304,9 @@ Return the matching payload.  PROCESS and TIMEOUT are passed to
 (defun ghostel-test--wait-until (pred &optional process timeout)
   "Poll until PRED returns non-nil, or TIMEOUT seconds elapse.
 PROCESS, when non-nil, is passed to `accept-process-output' so both
-Emacs PTY and native event output can be drained."
-  (let* ((timeout (or timeout 5))
+Emacs PTY and native event output can be drained.  TIMEOUT is scaled
+by `ghostel-test--timeout-scale'."
+  (let* ((timeout (* (or timeout 5) ghostel-test--timeout-scale))
          (deadline (+ (float-time) timeout))
          result)
     (while (and (not (setq result (funcall pred)))
