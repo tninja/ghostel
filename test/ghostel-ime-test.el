@@ -13,7 +13,7 @@
 (require 'ghostel-test-helpers)
 (require 'ghostel-ime)
 
-(declare-function ghostel--redraw-now "ghostel" (buffer))
+(declare-function ghostel--redraw-now "ghostel" (buffer &optional force))
 (declare-function ghostel--redraw "ghostel" (term &optional full))
 (declare-function ghostel--buffer-editable-p "ghostel")
 (declare-function ghostel--send-string "ghostel" (string))
