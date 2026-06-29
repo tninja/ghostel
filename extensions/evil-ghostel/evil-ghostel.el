@@ -150,7 +150,12 @@ ORIG-FN is the advised function (TERM, FULL).  Skipped in alt-screen (1049)."
              (saved-ve (and visual-p (bound-and-true-p evil-visual-end)
                             (marker-position evil-visual-end))))
         (funcall orig-fn term full)
-        (when (memq evil-state '(insert emacs))
+        ;; Don't drag point to the cursor while the user reads scrollback;
+        ;; redisplay would yank the viewport back to the bottom each frame.
+        ;; (No window showing the buffer → treat as following.)
+        (when (and (memq evil-state '(insert emacs))
+                   (let ((win (get-buffer-window (current-buffer) t)))
+                     (or (null win) (ghostel--window-anchored-p win))))
           (evil-ghostel--reset-cursor-point))
         (when visual-p
           (let ((pmax (point-max)))

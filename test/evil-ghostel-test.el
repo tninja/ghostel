@@ -326,6 +326,55 @@ advice must not restore point or visual markers there."
    ;; Advice bypassed → the mock's point placement (point-min) wins.
    (should (= (point-min) (point)))))
 
+(ert-deftest evil-ghostel-test-around-redraw-keeps-point-in-scrollback ()
+  "Insert-state redraw keeps point put while reading scrollback (seam 2).
+When the window has scrolled off the live output, `evil-ghostel--around-redraw'
+must not drag point to the terminal cursor; when the window follows the bottom,
+it still snaps point to the cursor."
+  (let ((buf (generate-new-buffer " *evil-ghostel-test-seam2*"))
+        (previous-buffer (window-buffer (selected-window))))
+    (unwind-protect
+        (progn
+          (set-window-buffer (selected-window) buf)
+          (with-current-buffer buf
+            (ghostel-mode)
+            (evil-local-mode 1)
+            (evil-ghostel-mode 1)
+            (let ((rows (max 1 (window-body-height))))
+              (setq-local ghostel--term 'fake
+                          ghostel--term-rows rows)
+              (let ((inhibit-read-only t))
+                (dotimes (i (+ rows 20))
+                  (insert (format "row-%02d\n" i)))
+                (insert "$ ")))
+            (setq ghostel--cursor-char-pos (point))
+            ;; Viewport-relative cursor: last row, column past the prompt.
+            (setq ghostel--cursor-pos (cons (current-column) (1- ghostel--term-rows)))
+            (cl-letf (((symbol-function 'ghostel--mode-enabled)
+                       (lambda (&rest _) nil)))
+              ;; Bind `evil-state' directly: entering insert via
+              ;; `evil-insert-state' would fire entry hooks that touch the
+              ;; (fake) native term.
+              (let ((win (selected-window))
+                    (evil-state 'insert))
+                ;; Scrolled into scrollback: point must stay put.
+                (goto-char (point-min))
+                (set-window-start win (point-min) t)
+                (should-not (ghostel--window-anchored-p win))
+                (evil-ghostel--around-redraw #'ignore 'fake)
+                (should (= (point) (point-min)))
+                ;; Following the bottom: point snaps to the live cursor.
+                (goto-char (point-max))
+                (ghostel--anchor-window win)
+                (should (ghostel--window-anchored-p win))
+                (goto-char (point-min))
+                (evil-ghostel--around-redraw #'ignore 'fake)
+                (should (/= (point) (point-min)))))))
+      (when (buffer-live-p buf)
+        (with-current-buffer buf (evil-ghostel-mode -1)))
+      (set-window-buffer (selected-window) previous-buffer)
+      (kill-buffer buf))))
+
 (ert-deftest evil-ghostel-test-anchor-inhibit-predicate ()
   "`evil-ghostel--anchor-inhibit' vetoes only when roaming off the cursor.
 Fires only where evil-ghostel drives PTY input (`evil-ghostel--active-p':
