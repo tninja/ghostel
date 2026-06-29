@@ -84,6 +84,8 @@ literal key."
    (should evil-ghostel-mode)
    (should (memq 'evil-ghostel--insert-state-entry
                  evil-insert-state-entry-hook))
+   (should (memq 'evil-ghostel--anchor-inhibit
+                 ghostel-inhibit-anchor-functions))
    (should (advice--p (advice--symbol-function 'ghostel--redraw)))
    (should (advice--p (advice--symbol-function 'ghostel--apply-cursor-style)))
    ;; Editing operators are bound via [remap evil-FOO] in normal state.
@@ -323,6 +325,40 @@ advice must not restore point or visual markers there."
      (evil-ghostel--around-redraw (symbol-function 'ghostel--redraw) nil))
    ;; Advice bypassed → the mock's point placement (point-min) wins.
    (should (= (point-min) (point)))))
+
+(ert-deftest evil-ghostel-test-anchor-inhibit-predicate ()
+  "`evil-ghostel--anchor-inhibit' vetoes only when roaming off the cursor.
+Fires only where evil-ghostel drives PTY input (`evil-ghostel--active-p':
+semi-char, outside alt-screen).  There: non-nil in a motion-capable state with
+point off the live cursor and no FORCE; nil on the cursor, under FORCE, or in
+insert state.  Inert (never vetoes) when not active, e.g. in alt-screen."
+  (evil-ghostel-test--with-evil-buffer
+   (insert "one\ntwo\nthree\n$ ")
+   (setq-local ghostel--term 'fake)
+   (setq-local ghostel--cursor-char-pos (point))
+   (let ((off (point-min)))
+     ;; Active: semi-char input mode, not alt-screen.
+     (cl-letf (((symbol-function 'ghostel--mode-enabled)
+                (lambda (&rest _) nil)))
+       (let ((evil-state 'normal))
+         ;; Normal state, point off the cursor: veto, unless FORCE.
+         (goto-char off)
+         (should (evil-ghostel--anchor-inhibit nil nil))
+         (should-not (evil-ghostel--anchor-inhibit nil t))
+         ;; Point back on the live cursor: no veto.
+         (goto-char ghostel--cursor-char-pos)
+         (should-not (evil-ghostel--anchor-inhibit nil nil)))
+       ;; Insert state roams point off the cursor but still follows: no veto.
+       (let ((evil-state 'insert))
+         (goto-char off)
+         (should-not (evil-ghostel--anchor-inhibit nil nil))))
+     ;; Not active (alt-screen): ghostel owns the anchor, never vetoed even
+     ;; while roaming off the cursor in a motion state.
+     (cl-letf (((symbol-function 'ghostel--mode-enabled)
+                (lambda (&rest _) t)))
+       (let ((evil-state 'normal))
+         (goto-char off)
+         (should-not (evil-ghostel--anchor-inhibit nil nil)))))))
 
 ;; -----------------------------------------------------------------------
 ;; Test: reset-cursor-point

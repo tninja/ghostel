@@ -325,6 +325,16 @@ buffer during transient states such as Emacs Lisp input-method
 composition."
   :type 'hook)
 
+(defcustom ghostel-inhibit-anchor-functions nil
+  "Abnormal hook to veto per-window anchoring after a redraw.
+Each function is called with (WINDOW FORCE), WINDOW's buffer current.
+A non-nil return skips anchoring WINDOW for this redraw - neither the
+viewport nor point moves - letting point roam off the live cursor while
+the buffer stays in a follow-capable input mode (e.g. evil normal-state
+motion over an animated terminal).  Honor FORCE (deliberate paste/yank
+and mode-switch anchors) by returning nil when it is set."
+  :type 'hook)
+
 (defcustom ghostel-adaptive-fps t
   "Use adaptive frame rate for terminal redraw.
 When non-nil, use a shorter initial delay for responsive interactive
@@ -2338,9 +2348,10 @@ Most keys are sent to the terminal; keys in
     (setq ghostel--mode-line-tag nil)
     (ghostel--mode-line-refresh)
     (when ghostel--term
-      ;; Snap the window to the live viewport so the user lands back
-      ;; at the prompt after exiting copy/emacs/line.
-      (ghostel--anchor-window)
+      ;; Snap the window to the live viewport so the user lands back at the
+      ;; prompt after exiting copy/emacs/line.  FORCE so a deliberate switch
+      ;; wins over any `ghostel-inhibit-anchor-functions' roaming veto.
+      (ghostel--anchor-window nil t)
       (setq ghostel--force-next-redraw t)
       (goto-char (point-max))
       (ghostel--invalidate))))
@@ -2369,7 +2380,8 @@ Even keys listed in `ghostel-keymap-exceptions' (\\`C-c', \\`C-x',
     (setq ghostel--mode-line-tag (ghostel--mode-line-tag-make 'char ":Char"))
     (ghostel--mode-line-refresh)
     (when ghostel--term
-      (ghostel--anchor-window)
+      ;; FORCE: a deliberate switch wins over any roaming veto.
+      (ghostel--anchor-window nil t)
       (setq ghostel--force-next-redraw t)
       (goto-char (point-max))
       (ghostel--invalidate))
@@ -4599,6 +4611,7 @@ the bottom of WINDOW."
 In graphical frames, use Emacs's pixel layout for exact bottom alignment.
 In text frames, use line-count geometry with no vscroll.
 Do nothing unless WINDOW displays a live Ghostel terminal.
+A `ghostel-inhibit-anchor-functions' hook can veto anchoring a window.
 
 Copy mode is never anchored (the viewport is frozen).  Emacs mode is
 anchored only when FORCE is non-nil, reserved for deliberate anchors such
@@ -4613,7 +4626,12 @@ user's point, since its input region is user-owned."
                  (and (derived-mode-p 'ghostel-mode)
                       (if (eq ghostel--input-mode 'emacs)
                           force
-                        (ghostel--terminal-live-p))))))
+                        (ghostel--terminal-live-p))
+                      ;; Per-window veto: a consumer (e.g. evil-ghostel) can
+                      ;; keep point roaming off the live cursor while the
+                      ;; buffer stays in a follow-capable input mode.
+                      (not (run-hook-with-args-until-success
+                            'ghostel-inhibit-anchor-functions window force))))))
     (with-selected-window window
       (with-current-buffer buffer
         (let ((target (point-max))

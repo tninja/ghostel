@@ -160,6 +160,16 @@ ORIG-FN is the advised function (TERM, FULL).  Skipped in alt-screen (1049)."
               (set-marker evil-visual-end (min saved-ve pmax))))))
     (funcall orig-fn term full)))
 
+(defun evil-ghostel--anchor-inhibit (_window force)
+  "Veto ghostel's redraw anchor while point roams off the live cursor.
+A `ghostel-inhibit-anchor-functions' entry: returns non-nil in a motion-capable
+evil state with point off the cursor, unless FORCE."
+  (and (not force)
+       (evil-ghostel--active-p)
+       (memq evil-state '(normal visual operator motion))
+       ghostel--cursor-char-pos
+       (/= (point) ghostel--cursor-char-pos)))
+
 ;; Cursor style: let evil control cursor shape
 
 (defun evil-ghostel--override-cursor-style (orig-fn)
@@ -868,6 +878,10 @@ Enabling installs global advice while any buffer has the mode enabled."
         ;; states expect point to follow the terminal cursor.
         (add-hook 'evil-emacs-state-entry-hook
                   #'evil-ghostel--insert-state-entry nil t)
+        ;; Let normal/visual/operator/motion-state navigation roam point off
+        ;; the live cursor without the per-redraw anchor snapping it back.
+        (add-hook 'ghostel-inhibit-anchor-functions
+                  #'evil-ghostel--anchor-inhibit nil t)
         (advice-add 'ghostel--redraw :around #'evil-ghostel--around-redraw)
         (advice-add 'ghostel--apply-cursor-style :around
                     #'evil-ghostel--override-cursor-style)
@@ -876,6 +890,8 @@ Enabling installs global advice while any buffer has the mode enabled."
                  #'evil-ghostel--insert-state-entry t)
     (remove-hook 'evil-emacs-state-entry-hook
                  #'evil-ghostel--insert-state-entry t)
+    (remove-hook 'ghostel-inhibit-anchor-functions
+                 #'evil-ghostel--anchor-inhibit t)
     (kill-local-variable 'ghostel-mark-activation-input-mode)
     (unless (evil-ghostel--any-active-elsewhere-p (current-buffer))
       (advice-remove 'ghostel--redraw #'evil-ghostel--around-redraw)
