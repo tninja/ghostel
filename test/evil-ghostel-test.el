@@ -962,6 +962,72 @@ without a real native module."
         (evil-ghostel-goto-input-position ghostel--cursor-char-pos))
       (should (zerop (length keys-sent))))))
 
+(defmacro evil-ghostel-test--with-cursor-fixture (prompt typed trail &rest body)
+  "Mock terminal: PROMPT (`ghostel-prompt') + TYPED (`ghostel-input') + TRAIL,
+with `ghostel--cursor-char-pos' at the TYPED/TRAIL boundary so TRAIL occupies
+cells to the right of the cursor.  Runs BODY with evil + `evil-ghostel-mode'
+on and the terminal mocked."
+  (declare (indent 3))
+  `(let ((buf (generate-new-buffer " *evil-ghostel-test-cursor*")))
+     (unwind-protect
+         (with-current-buffer buf
+           (ghostel-mode)
+           (let ((inhibit-read-only t))
+             (insert (propertize ,prompt 'ghostel-prompt t))
+             (insert (propertize ,typed 'ghostel-input t))
+             (setq ghostel--cursor-char-pos (point))
+             (setq ghostel--cursor-pos (cons (current-column) 0))
+             (insert (propertize ,trail 'ghostel-input t)))
+           (setq ghostel--term 'fake)
+           (setq ghostel--term-rows 1)
+           (evil-local-mode 1)
+           (evil-ghostel-mode 1)
+           (cl-letf (((symbol-function 'ghostel--mode-enabled)
+                      (lambda (&rest _) nil)))
+             ,@body))
+       (kill-buffer buf))))
+
+;; The color-based suggestion detection (`suggestion-p'/`greyed-out-p') is not
+;; exercisable under `--batch' (`color-values' has no display frame), so these
+;; test the clamp contract directly by stubbing `evil-ghostel--input-end' — the
+;; boundary the clamp trims a rightward target to.
+
+(ert-deftest evil-ghostel-test-goto-clamps-rightward-into-suggestion ()
+  "A rightward target past `evil-ghostel--input-end' (a trailing autosuggestion)
+is clamped to it: no right arrows cross the boundary and no `C-_'/backspace
+correction is emitted (issue #493)."
+  (evil-ghostel-test--with-cursor-fixture "$ " "ls" " --all"
+    (let ((sent '()))
+      (cl-letf (((symbol-function 'ghostel--send-encoded)
+                 (lambda (key mods &rest _) (push (cons key mods) sent)))
+                ((symbol-function 'evil-ghostel--sync-render) #'ignore)
+                ;; Suggestion trails the cursor -> the input end is the cursor.
+                ((symbol-function 'evil-ghostel--input-end)
+                 (lambda () ghostel--cursor-char-pos)))
+        ;; Aim into the trailing "suggestion".
+        (evil-ghostel-goto-input-position (+ ghostel--cursor-char-pos 3)))
+      (should-not (cl-find "right" sent :key #'car :test #'equal))
+      (should-not (cl-find '("_" . "ctrl") sent :test #'equal))
+      (should-not (cl-find "backspace" sent :key #'car :test #'equal))
+      ;; Point clamped back to the cursor (start of the suggestion).
+      (should (= (point) ghostel--cursor-char-pos)))))
+
+(ert-deftest evil-ghostel-test-goto-rightward-within-input-sends-right ()
+  "Rightward motion within typed input still sends right arrows — the
+suggestion clamp does not over-restrict (issue #493)."
+  (evil-ghostel-test--with-cursor-fixture "$ " "hel" "lo"
+    (let ((sent '()))
+      (cl-letf (((symbol-function 'ghostel--send-encoded)
+                 (lambda (key mods &rest _) (push (cons key mods) sent)))
+                ((symbol-function 'evil-ghostel--sync-render) #'ignore)
+                ;; Real input end is two cells right of the cursor.
+                ((symbol-function 'evil-ghostel--input-end)
+                 (lambda () (+ ghostel--cursor-char-pos 2))))
+        (evil-ghostel-goto-input-position (+ ghostel--cursor-char-pos 2)))
+      (should (= 2 (cl-count "right" sent :key #'car :test #'equal)))
+      (should-not (cl-find '("_" . "ctrl") sent :test #'equal))
+      (should-not (cl-find "backspace" sent :key #'car :test #'equal)))))
+
 (ert-deftest evil-ghostel-test-sync-render-forces-deferred-redraw ()
   "`sync-render' force-runs `ghostel--redraw-now' after a bulk-output drain.
 The filter only takes the synchronous redraw path for small echoes

@@ -315,56 +315,31 @@ Loops `accept-process-output' (capped by
 
 (defun evil-ghostel-goto-input-position (pos)
   "Drive the terminal cursor and Emacs point to buffer position POS.
-Returns t when the cursor reached POS.  Only meaningful in semi-char mode."
+On the cursor row a rightward target is clamped to `evil-ghostel--input-end',
+so the move never right-arrows across a trailing autosuggestion, which the
+shell would accept (zsh-autosuggestions / fish).  Only meaningful in
+semi-char mode.  Returns non-nil when it ran."
   (when (and ghostel--term ghostel--cursor-pos)
-    (let* ((start-char-pos ghostel--cursor-char-pos)
-           (start-cursor ghostel--cursor-pos)
-           (start-col (car start-cursor))
-           (start-row-vp (cdr start-cursor))
-           (target-col (save-excursion (goto-char pos) (current-column)))
+    (let* ((start-col (car ghostel--cursor-pos))
+           (start-row-vp (cdr ghostel--cursor-pos))
            (target-row-vp (or (ghostel--viewport-row-at pos) start-row-vp))
-           (dy (- target-row-vp start-row-vp))
-           (dx (- target-col start-col))
-           (right-arrow-drained nil)
-           (reached
-            (progn
-              (cond ((> dy 0) (dotimes (_ dy) (ghostel--send-encoded "down" "")))
-                    ((< dy 0) (dotimes (_ (abs dy)) (ghostel--send-encoded "up" ""))))
-              (cond ((> dx 0) (dotimes (_ dx) (ghostel--send-encoded "right" "")))
-                    ((< dx 0) (dotimes (_ (abs dx)) (ghostel--send-encoded "left" ""))))
-              ;; Verify landing only on rightward moves (the ones that can
-              ;; trip literal-echo or autosuggest).  Echo detection needs a
-              ;; rendered baseline; without one, treat the send as success.
-              (if (or (<= dx 0) (null start-char-pos))
-                  t
-                (setq right-arrow-drained t)
-                (evil-ghostel--sync-render)
-                (let ((post-cur ghostel--cursor-char-pos))
-                  (cond
-                   ((and post-cur (= post-cur pos)) t)
-                   ;; Literal-echo: cursor advanced 4×dx and buffer ends
-                   ;; with "^[[C".  Echo is 4 chars per arrow; send 3
-                   ;; backspaces per arrow to undo.
-                   ((and post-cur (zerop dy)
-                         (= post-cur (+ start-char-pos (* 4 dx)))
-                         (save-excursion
-                           (goto-char post-cur)
-                           (looking-back (regexp-quote "^[[C") (min 4 post-cur))))
-                    (dotimes (_ (* 3 dx)) (ghostel--send-encoded "backspace" ""))
-                    nil)
-                   ;; Cursor jumped past target — autosuggest accepted.
-                   ((and post-cur (> post-cur pos))
-                    (ghostel--send-encoded "_" "ctrl")
-                    nil)
-                   (t nil)))))))
-      (when reached
-        ;; Drain so `ghostel--cursor-pos' reflects the move, unless the
-        ;; rightward branch already drained or no arrows were sent.
-        (when (and (not right-arrow-drained)
-                   (or (/= dx 0) (/= dy 0)))
+           (dy (- target-row-vp start-row-vp)))
+      ;; Clamp only a rightward, same-row target: at end-of-input a right
+      ;; arrow accepts the greyed suggestion.
+      ;; `input-end' excludes it, so stopping there means we never accept.
+      (when (and (zerop dy)
+                 ghostel--cursor-char-pos
+                 (> pos ghostel--cursor-char-pos))
+        (setq pos (min pos (or (evil-ghostel--input-end) pos))))
+      (let ((dx (- (save-excursion (goto-char pos) (current-column)) start-col)))
+        (cond ((> dy 0) (dotimes (_ dy) (ghostel--send-encoded "down" "")))
+              ((< dy 0) (dotimes (_ (abs dy)) (ghostel--send-encoded "up" ""))))
+        (cond ((> dx 0) (dotimes (_ dx) (ghostel--send-encoded "right" "")))
+              ((< dx 0) (dotimes (_ (abs dx)) (ghostel--send-encoded "left" ""))))
+        (when (or (/= dx 0) (/= dy 0))
           (evil-ghostel--sync-render))
-        (goto-char pos))
-      reached)))
+        (goto-char pos)
+        t))))
 
 (defun evil-ghostel-delete-input-region (beg end)
   "Delete BEG..END from input by backspacing over the PTY; return the count.
