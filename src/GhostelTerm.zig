@@ -164,10 +164,11 @@ pub fn effect(_: *Self, comptime func: []const u8, args: anytype) void {
 
 pub fn encode(
     self: *Self,
+    buf: []u8,
     key: gt.input.Key,
     mods: gt.input.KeyMods,
     utf8: ?[]const u8,
-) !bool {
+) !?[]const u8 {
     const options = gt.input.KeyEncodeOptions.fromTerminal(&self.terminal);
     var event = gt.input.KeyEvent{ .action = .press, .key = key, .mods = mods };
     if (utf8) |text| {
@@ -175,14 +176,13 @@ pub fn encode(
     }
 
     // Encode
-    var buf: [128]u8 = undefined;
-    var writer = std.io.Writer.fixed(&buf);
+    var writer = std.io.Writer.fixed(buf);
     try gt.input.encodeKey(&writer, event, options);
     const encoded = writer.buffered();
 
-    if (encoded.len == 0) return false;
+    if (encoded.len == 0) return null;
     try self.ptyWrite(encoded);
-    return true;
+    return encoded;
 }
 
 pub fn encodeMouse(
@@ -544,6 +544,9 @@ pub const emacs_functions = [_]emacs.FunctionEntry{
         \\Encode a key event using the terminal's key encoder.
         \\
         \\(ghostel--encode-key TERM KEY MODS &optional UTF8)
+        \\
+        \\Writes the encoded bytes to the PTY and returns them as a unibyte
+        \\string, or nil when the encoder produced no output.
         ,
         .impl = struct {
             pub fn call(env: emacs.Env, nargs: isize, args: [*c]emacs.Value) !emacs.Value {
@@ -560,8 +563,12 @@ pub const emacs_functions = [_]emacs.FunctionEntry{
                     null;
                 const key = input.mapKey(key_name);
                 const mods = input.parseMods(mod_str);
-                const sent = try term.encode(key, mods, utf8);
-                return if (sent) env.t() else env.nil();
+                var encode_buf: [128]u8 = undefined;
+                const sent = try term.encode(&encode_buf, key, mods, utf8);
+                return if (sent) |bytes|
+                    env.makeUnibyteString(bytes) orelse env.t()
+                else
+                    env.nil();
             }
         },
     },

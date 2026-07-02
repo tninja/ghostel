@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `ghostel-debug-info` no longer truncates the report to the key-encoding
+  section: the probe terminal (`ghostel--new` is buffer-affine and erases the
+  current buffer since 0.40.0) is now created in a temp buffer instead of
+  `*ghostel-debug*`.
+- The key-encoding probe and `ghostel-debug-keypress` report encoder bytes
+  again: `ghostel--encode-key` now returns the encoded bytes (the native PTY
+  path no longer routes them through the elisp `ghostel--write-pty`).
+
 ## [0.40.0] — 2026-07-02
 
 ### Added
