@@ -4349,7 +4349,10 @@ returned process owns the PTY and receives `ghostel--filter' and
     ;; Set the PTY's actual window size (ioctl TIOCSWINSZ) so that
     ;; the program's line editor (readline/ZLE) can render properly.
     (set-process-window-size proc ghostel--term-rows ghostel--term-cols)
-    (process-put proc 'adjust-window-size-function nil)
+    ;; `ghostel--adjust-size' owns sizing; `ignore' (nil would fall
+    ;; back to the default) opts out of core's all-frames
+    ;; `window--adjust-process-windows'.
+    (process-put proc 'adjust-window-size-function #'ignore)
     proc))
 
 (defun ghostel--spawn-via-native (command)
@@ -4561,14 +4564,24 @@ remain handled inside the renderer."
      (or begin (ghostel--viewport-start) (point-min))
      (or end (point-max)))))
 
+(defun ghostel--daemon-dummy-frame-p (frame)
+  "Non-nil if FRAME is the daemon's invisible initial frame.
+Killing a buffer can substitute a ghostel buffer into that frame's sole window.
+Its 80x24 dummy size must never count as a display of the buffer.
+`frame-visible-p' and `terminal-live-p' are both t on it,
+so compare against `terminal-frame' instead."
+  (and (daemonp) (eq frame terminal-frame)))
+
 (defun ghostel--windows (&optional buffer all-frames)
   "Return Ghostel windows, optionally limited to BUFFER.
-ALL-FRAMES has the same meaning as in `walk-windows'."
+ALL-FRAMES has the same meaning as in `walk-windows'.
+Windows on the daemon's dummy initial frame are excluded."
   (let (windows)
     (walk-windows
      (lambda (window)
        (let ((window-buffer (window-buffer window)))
          (when (and (or (null buffer) (eq window-buffer buffer))
+                    (not (ghostel--daemon-dummy-frame-p (window-frame window)))
                     (with-current-buffer window-buffer
                       (derived-mode-p 'ghostel-mode)))
            (push window windows))))

@@ -258,6 +258,29 @@ modes (47 / 1047 / 1049) are handled uniformly."
         (should ghostel--force-next-redraw)
         (should redraw-called)))))
 
+(ert-deftest ghostel-test-windows-excludes-daemon-dummy-frame ()
+  "`ghostel--windows' drops windows on the daemon's dummy initial frame.
+Killing a buffer can substitute a ghostel buffer into that invisible
+80x24 frame, which then clamps the PTY size (#504)."
+  (let ((buf (generate-new-buffer " *ghostel-test-dummy-frame*"))
+        (orig-buf (window-buffer (selected-window))))
+    (unwind-protect
+        (progn
+          (with-current-buffer buf
+            (setq major-mode 'ghostel-mode))
+          (set-window-buffer (selected-window) buf)
+          (should (memq (selected-window) (ghostel--windows buf t)))
+          (cl-letf (((symbol-function 'daemonp) (lambda () t)))
+            ;; Selected frame plays the daemon's initial frame.
+            (let ((terminal-frame (selected-frame)))
+              (should-not (ghostel--windows buf t)))
+            ;; Some other frame is the dummy one: window stays.
+            (let ((terminal-frame 'other-frame))
+              (should (memq (selected-window) (ghostel--windows buf t))))))
+      (when (buffer-live-p orig-buf)
+        (set-window-buffer (selected-window) orig-buf))
+      (kill-buffer buf))))
+
 (ert-deftest ghostel-test-local-font-scale-refits-anchored-window ()
   "Local font scaling resizes and re-anchors previously anchored windows."
   (let ((buf (generate-new-buffer " *ghostel-test-local-font-scale*"))

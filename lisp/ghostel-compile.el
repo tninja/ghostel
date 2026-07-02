@@ -536,7 +536,8 @@ local machine happens to have)."
     (set-process-window-size proc height width)
     (when compilation-always-kill
       (set-process-query-on-exit-flag proc nil))
-    (process-put proc 'adjust-window-size-function nil)
+    ;; See `ghostel--spawn-pty'.
+    (process-put proc 'adjust-window-size-function #'ignore)
     proc))
 
 
