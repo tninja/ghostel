@@ -4,7 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-07-03
+
 ### Fixed
+- Ghostel buffers substituted into the Emacs daemon's invisible 80x24 initial
+  frame no longer clamp the terminal to that dummy window (79x22): such windows
+  are filtered out of the window-size hook and their PTYs opt out of core's
+  process-window-size adjustment.
+  Fixes [#504](https://github.com/dakra/ghostel/issues/504).
+- A local and a remote (TRAMP) `ghostel-project` sharing a name no longer
+  collide on the same `*NAME-ghostel*` buffer; remote roots fold their
+  `method:user@host` prefix into the buffer identity.
+  Fixes [#344](https://github.com/dakra/ghostel/issues/344).
+- `ghostel-prompt-regexp` now matches prompts padded with a no-break space
+  (U+00A0) — such as Claude Code's `>` prompt — so column-aware motions no
+  longer land on the padding.
+- Text scaling now preserves window anchoring, and global text-scale changes
+  (`global-text-scale-adjust`) resize and re-anchor the terminal like local
+  `text-scale-mode`.
+- Leaving copy mode now forces a terminal resize, so size changes made while in
+  copy mode take effect on return.
+- The native PTY now flushes pending terminal updates before the child process
+  exits, so the last output before exit is no longer lost.
 - `ghostel-debug-info` no longer truncates the report to the key-encoding
   section: the probe terminal (`ghostel--new` is buffer-affine and erases the
   current buffer since 0.40.0) is now created in a temp buffer instead of
@@ -12,6 +33,15 @@ All notable changes to this project will be documented in this file.
 - The key-encoding probe and `ghostel-debug-keypress` report encoder bytes
   again: `ghostel--encode-key` now returns the encoded bytes (the native PTY
   path no longer routes them through the elisp `ghostel--write-pty`).
+
+### Internal
+- The native `ghostel--encode-key` now returns the encoded bytes instead of a
+  boolean; the minimum required native module version is bumped to 0.41.0.
+- The native module build now respects the Zig install prefix (`zig build
+  --prefix .`).
+- Added Ghostel window lookup helpers and store the allocator on the renderer.
+- Added an elate scenario suite for evil-ghostel shell editing and an
+  agent-output anchor test script.
 
 ## [0.40.0] — 2026-07-02
 
