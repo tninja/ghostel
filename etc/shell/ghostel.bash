@@ -14,6 +14,11 @@
 # Idempotency guard — skip if already loaded (e.g. auto-injected).
 [[ "$(type -t __ghostel_osc7)" = "function" ]] && return
 
+# Old bash (e.g. macOS system bash 3.2) rejects process substitution `<(...)`
+# at parse time under POSIX mode; the `ssh` wrapper below uses it.
+# Exit POSIX mode first so sourcing succeeds regardless of the caller's mode.
+builtin set +o posix
+
 # Enable PTY echo.  Bash's readline buffers its own echo output so it
 # never reaches the Emacs process filter.  PTY-level echo makes the
 # kernel echo input immediately.

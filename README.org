@@ -310,6 +310,13 @@ string match -qr '^ghostel(,|$)' -- "$INSIDE_EMACS"; and source "$EMACS_GHOSTEL_
 source /path/to/ghostel/etc/shell/ghostel.nu
 #+end_src
 
+#+begin_note
+macOS's built-in =/bin/bash= is version 3.2, which Apple patched to ignore the
+=ENV= variable auto-injection relies on - so *automatic* integration does not
+work with it.  Use a newer bash (e.g. Homebrew's) via =ghostel-shell=, or source
+=ghostel.bash= manually from =~/.bashrc= as shown above.
+#+end_note
+
 Remote (TRAMP / outbound =ssh=) shell integration has its own setup; see [[#tramp-remote-terminals][TRAMP
 (Remote Terminals)]].
 
