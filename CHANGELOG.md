@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.43.0] — 2026-07-11
+
+### Added
+- Native Windows support for x86_64 and ARM64 Emacs through a ConPTY backend
+  with process spawning, resizing, environment propagation, and terminal I/O.
+- Windows releases now bundle the native module and Microsoft's redistributable
+  ConPTY runtime. Automatic downloads and local builds install the matching
+  support files, with the system ConPTY as a fallback.
+
+### Changed
+- Windows `sshx` TRAMP sessions now resolve the remote user's login shell, and
+  remote password prompts are detected without probing the local PTY.
+- Updated libghostty so OSC color-query replies and related terminal parsing
+  stay aligned with current Ghostty behavior.
+
+### Fixed
+- Full-viewport terminal rotations now redraw rows marked dirty at page level,
+  including alternate-screen and primary-screen configurations without
+  scrollback.
+- Window resizing now resolves terminal state from the resized window's buffer,
+  preventing split or programmatic resizes from leaving the terminal grid stale.
+- Focus-only clicks now preserve the existing scrollback position instead of
+  snapping the window back to the live cursor.
+- Input-mode commands now reject non-Ghostel buffers instead of replacing their
+  local keymaps or leaking mode state.
+- Bash shell integration can now be sourced from POSIX-mode shells, including
+  the Bash 3.2 shipped with macOS.
+- Native PTY teardown now drains final output, safely interrupts blocked I/O,
+  keeps writes serialized and quit-aware, and terminates native children during
+  Emacs shutdown.
+- Native children now fail for invalid working directories, preserve full
+  Windows exit codes, and report POSIX signal exits consistently.
+
+### Internal
+- Split native PTY handling into shared lifecycle code with platform-specific
+  POSIX and ConPTY backends and common cancellation and write contracts.
+- Expanded portable native PTY, Windows asset, TRAMP, lifecycle, OSC, renderer,
+  and path-resolution regression coverage.
+
 ## [0.42.1] — 2026-07-07
 
 ### Fixed
