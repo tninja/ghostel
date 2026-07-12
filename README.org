@@ -5,11 +5,9 @@
 #+texinfo_dir_title: Ghostel: (ghostel).
 #+texinfo_dir_desc: Terminal emulator for Emacs powered by libghostty-vt.
 
-# HTML export theme (ReadTheOrg). HTML-only; does not affect the Texinfo/Info export.
-#+SETUPFILE: https://fniessen.github.io/org-html-themes/org/setup/html-theme-readtheorg.setup
-# Upstream ReadTheOrg references search.css by a relative path that 404s; load
-# it from its absolute URL so the sidebar search box is styled correctly.
-#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/readtheorg/css/search.css"/>
+# HTML export theme (ReadTheOrg, vendored under docs/org-html-themes/).
+# HTML-only; does not affect the Texinfo/Info export.
+#+SETUPFILE: docs/org-html-themes/org/setup/html-theme-readtheorg-local.setup
 
 #+html: <a href="https://melpa.org/#/ghostel"><img alt="MELPA" src="https://melpa.org/packages/ghostel-badge.svg"/></a>
 #+html: <a href="https://stable.melpa.org/#/ghostel"><img alt="MELPA Stable" src="https://stable.melpa.org/packages/ghostel-badge.svg"/></a>
@@ -1912,9 +1910,6 @@ while ghostel and vterm trade a compile step for a C/Zig engine.
 
 | Feature                       | ghostel | vterm    | eat      |
 |-------------------------------+---------+----------+----------|
-| Native module required        | ✅      | ✅       | ❌       |
-| Auto-download module          | ✅      | ❌       | n/a      |
-|-------------------------------+---------+----------+----------|
 | True color (24-bit)           | ✅      | ✅       | ✅       |
 | OSC 4/10/11 color queries     | ✅      | ❌       | partial  |
 | Bold / italic                 | ✅      | ✅       | ✅       |
@@ -1954,6 +1949,10 @@ while ghostel and vterm trade a compile step for a C/Zig engine.
 | Drag-and-drop (file paths)    | ✅      | ❌       | ❌       |
 | Password prompt detection     | ✅      | ❌       | manual   |
 |-------------------------------+---------+----------+----------|
+| Native Windows support        | ✅      | ❌       | ❌       |
+| No native module needed       | ❌      | ❌       | ✅       |
+| Auto-download module          | ✅      | ❌       | n/a      |
+|-------------------------------+---------+----------+----------|
 | Scrollback default            | 5 MB    | 1,000 ln | 128 KB   |
 | Default redraw rate           | ~30 fps | ~10 fps  | adaptive |
 | Throughput, plain ASCII       | 75 MB/s | 18 MB/s  | 6.2 MB/s |
@@ -1982,7 +1981,10 @@ Lisp: nothing to compile or download, so it runs anywhere Emacs does - including
 hosts where you cannot build a native module.  Ghostel downloads a prebuilt
 module on first use (or builds it with [[https://ziglang.org/][Zig]]); vterm compiles its single C
 dependency with CMake on first load.  The native engines are what buy ghostel and
-vterm their large throughput margin over eat.
+vterm their large throughput margin over eat.  Ghostel is also the only one of
+the three that runs on native Windows Emacs (via ConPTY, see [[#windows-platform-notes][Platform notes]]):
+vterm does not support Windows, and eat needs a real PTY, which Windows Emacs
+does not provide.
 
 *Graphics.*  Inline images work in ghostel via the Kitty graphics protocol and in
 eat via Sixel; vterm has neither.  The two protocols are not interchangeable - a

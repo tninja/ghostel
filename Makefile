@@ -237,13 +237,16 @@ $(DOC_DEPS_STAMP):
 		--eval "(package-install 'htmlize)"
 	@touch $@
 
-# Export README.org to a themed single-page site (ReadTheOrg) for GitHub
-# Pages.  The explicit output filename sidesteps `#+export_file_name:
-# ghostel.texi' (which would otherwise make ox-html write ghostel.html).
-# Needs network access for the ReadTheOrg `#+SETUPFILE'.
+# Export README.org to a themed single-page site (ReadTheOrg, vendored under
+# docs/org-html-themes/) for GitHub Pages.  The explicit output filename
+# sidesteps `#+export_file_name: ghostel.texi' (which would otherwise make
+# ox-html write ghostel.html).  The theme's src/ tree goes into public/ so its
+# relative HTML_HEAD links resolve.
+DOC_THEME_FILES := $(shell find docs/org-html-themes -type f)
+
 html: public/index.html
 
-public/index.html: README.org $(DOC_DEPS_STAMP)
+public/index.html: README.org $(DOC_DEPS_STAMP) $(DOC_THEME_FILES)
 	@mkdir -p public
 	$(EMACS) --batch $(EMACSFLAGS) -Q \
 		--eval "(setq package-user-dir \"$(DOC_ELPA_DIR)\")" \
@@ -253,11 +256,10 @@ public/index.html: README.org $(DOC_DEPS_STAMP)
 		--eval "(setq make-backup-files nil \
 		              org-html-validation-link nil \
 		              org-export-with-broken-links 'mark \
-		              org-html-htmlize-output-type 'css \
-		              org-resource-download-policy 'safe \
-		              org-safe-remote-resources '(\"\\\\\`https://fniessen\\\\.github\\\\.io/\"))" \
+		              org-html-htmlize-output-type 'css)" \
 		--eval "(with-current-buffer (find-file-noselect \"README.org\") \
 		          (org-export-to-file 'html \"public/index.html\"))"
+	cp -R docs/org-html-themes/src public/
 
 clean:
 	rm -f ghostel-module.dylib ghostel-module.so ghostel-module.dll ghostel-module.version
