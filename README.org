@@ -6,10 +6,10 @@
 #+texinfo_dir_desc: Terminal emulator for Emacs powered by libghostty-vt.
 
 # HTML export theme (ReadTheOrg). HTML-only; does not affect the Texinfo/Info export.
-#+SETUPFILE: https://fniessen.github.io/org-html-themes/org/html-theme-readtheorg.setup
+#+SETUPFILE: https://fniessen.github.io/org-html-themes/org/setup/html-theme-readtheorg.setup
 # Upstream ReadTheOrg references search.css by a relative path that 404s; load
 # it from its absolute URL so the sidebar search box is styled correctly.
-#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/readtheorg_theme/css/search.css"/>
+#+HTML_HEAD: <link rel="stylesheet" type="text/css" href="https://fniessen.github.io/org-html-themes/src/readtheorg/css/search.css"/>
 
 #+html: <a href="https://melpa.org/#/ghostel"><img alt="MELPA" src="https://melpa.org/packages/ghostel-badge.svg"/></a>
 #+html: <a href="https://stable.melpa.org/#/ghostel"><img alt="MELPA Stable" src="https://stable.melpa.org/packages/ghostel-badge.svg"/></a>
