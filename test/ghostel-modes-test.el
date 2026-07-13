@@ -16,6 +16,25 @@
     (should (member 'ghostel-default
                     (cdr (assq 'default face-remapping-alist))))))
 
+(ert-deftest ghostel-test-mode-shields-default-text-properties ()
+  "A global `default-text-properties' does not reach ghostel buffers.
+Its `line-spacing'/`line-height' fallback would inflate rendered rows
+invisibly to the grid sizing math (discussion #534)."
+  (let ((old (default-value 'default-text-properties)))
+    (unwind-protect
+        (progn
+          (setq-default default-text-properties
+                        '(line-spacing 0.1 line-height 1.05))
+          (with-temp-buffer
+            (ghostel-mode)
+            (should (local-variable-p 'default-text-properties))
+            (should (null default-text-properties))
+            (let ((inhibit-read-only t))
+              (insert "x\n"))
+            (should (null (get-char-property (point-min) 'line-spacing)))
+            (should (null (get-char-property (point-min) 'line-height)))))
+      (setq-default default-text-properties old))))
+
 (ert-deftest ghostel-test-emacs-mode-preserves-point ()
   "In Emacs mode, point stays put while the terminal keeps running.
 The delayed redraw path always preserves point in Emacs mode,

@@ -5018,6 +5018,10 @@ for both native and Emacs PTY paths."
   (setq-local truncate-lines t)
   (setq-local scroll-conservatively 101)
   (setq-local line-spacing 0)
+  ;; Shield row geometry from a global `default-text-properties':
+  ;; `line-spacing'/`line-height' properties supplied through its fallback
+  ;; inflate rendered rows invisibly to the `window-screen-lines' sizing math.
+  (setq-local default-text-properties nil)
   (setq-local filter-buffer-substring-function #'ghostel--filter-buffer-substring)
   ;; expose cwd to buffer-menu/ibuffer
   (setq-local list-buffers-directory (expand-file-name default-directory))
