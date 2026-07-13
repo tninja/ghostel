@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.44.0] — 2026-07-13
+
 ### Added
 - New `ghostel-line-spacing` customization pads terminal rows with extra
   vertical space (integer pixels or a float fraction of the line height).
@@ -11,6 +13,31 @@ All notable changes to this project will be documented in this file.
   changing it live resizes open terminals. Note that Emacs draws no content
   into the spacing strip, so non-zero values leave gaps in box-drawing
   borders, block characters, and between kitty-graphics image rows.
+
+### Fixed
+- Point placed elsewhere on the cursor's row (for example after evil's
+  normal-state end-of-line adjustment at a prompt) now follows the cursor
+  row-wise when async output arrives, restoring the user's column instead of
+  stranding point in scrollback.
+- evil-ghostel: point parked on the cursor in normal/motion state now stays
+  on the live cursor during streaming output instead of stranding in
+  scrollback (regression of the original #228 fix).
+- Hidden terminals now keep pending output until the buffer is actually
+  redisplayed and only clear their pending state after a successful render,
+  so revealing a hidden terminal no longer shows stale content.
+- Ghostel buffers now override `default-text-properties` locally, so globally
+  configured `line-spacing`/`line-height` text properties no longer inflate
+  rendered rows and scroll the top of the terminal out of view.
+- ghostel-kitty: images keep their requested scale so they are no longer
+  cropped.
+- Quitting with `C-g` during terminal creation (for example at a dir-locals
+  prompt) now kills the partially created buffer instead of leaving an empty
+  ghostel buffer with no terminal behind.
+
+### Internal
+- The ReadTheOrg theme for the HTML docs export is now vendored under
+  `docs/`, so the docs build no longer depends on upstream URLs or network
+  access.
 
 ## [0.43.0] — 2026-07-11
 
