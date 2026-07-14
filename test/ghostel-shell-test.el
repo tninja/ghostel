@@ -338,15 +338,7 @@ the buffer is misclassified as remote, switching on TRAMP."
   ;; back to $HOSTNAME - pre-#276 behavior, no regression for those
   ;; users - so the assertion below would not hold and the test would
   ;; be testing the wrong invariant.
-  (let ((ver (with-temp-buffer
-               (call-process "bash" nil t nil "-c"
-                             "printf '%s.%s' \"$BASH_VERSINFO\" \"${BASH_VERSINFO[1]}\"")
-               (buffer-string))))
-    (skip-unless
-     (and (string-match "\\`\\([0-9]+\\)\\.\\([0-9]+\\)\\'" ver)
-          (let ((major (string-to-number (match-string 1 ver)))
-                (minor (string-to-number (match-string 2 ver))))
-            (or (> major 4) (and (= major 4) (>= minor 4)))))))
+  (skip-unless (ghostel-test--bash-at-least-p 4 4))
   (let* ((root (or (ghostel--resource-root)
                    (file-name-directory (locate-library "ghostel"))))
          (shell-bash (expand-file-name "etc/shell/ghostel.bash" root)))
@@ -421,6 +413,111 @@ output must be ours, not the competing one."
       ;; The LAST OSC 7 must be ours, not the competing one - libghostty
       ;; stores whichever fires last per cycle.
       (should-not (string-match-p "competing-host" (car (last osc7s)))))))
+
+(ert-deftest ghostel-test-bash-prompt-command-array-captured ()
+  "Array PROMPT_COMMAND (systemd osc-context style) is captured whole.
+
+systemd >= 258 ships /etc/profile.d/80-systemd-osc-context.sh, which
+turns PROMPT_COMMAND into a bash-5.1+ array before ghostel.bash loads
+\(issue #540).  Sourcing ghostel.bash must capture every element,
+collapse PROMPT_COMMAND to the wrapper alone, and run the captured
+hooks inside the wrapper with the user command's $? restored, before
+emitting 133;A."
+  :tags '(native)
+  (skip-unless (executable-find "bash"))
+  (skip-unless (ghostel-test--bash-at-least-p 5 1))
+  (let* ((root (or (ghostel--resource-root)
+                   (file-name-directory (locate-library "ghostel"))))
+         (shell-bash (expand-file-name "etc/shell/ghostel.bash" root)))
+    (skip-unless (file-exists-p shell-bash))
+    (let* ((probe
+            (concat
+             ;; Simulate systemd's profile.d script: seed element 0,
+             ;; append a hook that reports $? like
+             ;; __systemd_osc_context_precmdline does.
+             "fake_sd_hook() { printf '\\e]3008;end=x;status=%d\\a' \"$?\"; };"
+             " PROMPT_COMMAND+=('');"
+             " PROMPT_COMMAND+=(fake_sd_hook);"
+             (format " source %s;" shell-bash)
+             " declare -p PROMPT_COMMAND;"
+             " PS1='$ '; PS2='> ';"
+             ;; First cycle discarded: 133;D is skipped on the very
+             ;; first prompt, so exit-status reporting needs a second
+             ;; cycle.
+             " __ghostel_wrapped_prompt_command >/dev/null;"
+             " (exit 42); __ghostel_wrapped_prompt_command"))
+           (process-environment
+            (append '("INSIDE_EMACS=ghostel") process-environment))
+           (output (with-temp-buffer
+                     (call-process "bash" nil (current-buffer) nil
+                                   "--noprofile" "--norc" "-c" probe)
+                     (buffer-string))))
+      ;; PROMPT_COMMAND collapsed to the wrapper alone - no leftover
+      ;; array elements that would re-run outside the wrapper.
+      (should (string-match-p
+               "declare -- PROMPT_COMMAND=\"__ghostel_wrapped_prompt_command\""
+               output))
+      ;; The captured hook ran and saw the user command's exit status.
+      (should (string-match "\e\\]3008;end=x;status=42\a" output))
+      ;; 133;D reports the same status.
+      (should (string-match-p "\e\\]133;D;42\a" output))
+      ;; 133;A fires after the captured hook.
+      (let ((hook-pos (string-match "\e\\]3008;end=x" output))
+            (a-pos (string-match "\e\\]133;A" output)))
+        (should (and hook-pos a-pos (> a-pos hook-pos)))
+        ;; No stray 133;C after 133;A (the wrapper is the probe's last
+        ;; command, so nothing legitimate emits C afterwards).
+        (should-not (string-match-p "\e\\]133;C" (substring output a-pos)))))))
+
+(ert-deftest ghostel-test-bash-prompt-command-array-sibling-hook-harmless ()
+  "A hook appended to the PROMPT_COMMAND array after load is harmless.
+
+When something appends to the bash-5.1+ PROMPT_COMMAND array after
+ghostel.bash loaded (manual setup sourcing ghostel.bash before
+profile.d, `direnv hook bash', ...), the sibling element executes at
+top level each prompt cycle.  The DEBUG trap must not treat it as a
+user command: no 133;C after 133;A, and PS1 keeps its 133;P/B wrap
+\(issue #540).  The element is compound (two commands joined by `;')
+because DEBUG fires once per simple command - the guard must match
+each fragment, not just whole elements."
+  :tags '(native)
+  (skip-unless (executable-find "bash"))
+  (skip-unless (ghostel-test--bash-at-least-p 5 1))
+  (let* ((root (or (ghostel--resource-root)
+                   (file-name-directory (locate-library "ghostel"))))
+         (shell-bash (expand-file-name "etc/shell/ghostel.bash" root)))
+    (skip-unless (file-exists-p shell-bash))
+    (let* ((probe
+            (concat
+             ;; The sibling hook checks PS1 from inside its function
+             ;; body (the DEBUG trap does not fire there), so it sees
+             ;; the state the prompt would be displayed with.
+             "fake_sd_hook() { case $PS1 in"
+             " *'133;P;k=i'*) printf SIBLINGWRAPPED;;"
+             " *) printf SIBLINGUNWRAPPED;; esac;"
+             " printf '\\e]3008;SD\\a'; };"
+             " fake_hist_hook() { :; };"
+             (format " source %s;" shell-bash)
+             " PS1='$ '; PS2='> ';"
+             " PROMPT_COMMAND+=('fake_hist_hook; fake_sd_hook');"
+             ;; Simulate one prompt cycle the way bash runs an array:
+             ;; DEBUG fires once per simple command of each element.
+             " __ghostel_wrapped_prompt_command;"
+             " fake_hist_hook;"
+             " fake_sd_hook"))
+           (process-environment
+            (append '("INSIDE_EMACS=ghostel") process-environment))
+           (output (with-temp-buffer
+                     (call-process "bash" nil (current-buffer) nil
+                                   "--noprofile" "--norc" "-c" probe)
+                     (buffer-string))))
+      ;; The sibling saw the marked PS1 - the DEBUG trap didn't unwrap.
+      (should (string-match-p "SIBLINGWRAPPED" output))
+      (should-not (string-match-p "SIBLINGUNWRAPPED" output))
+      ;; No 133;C between 133;A and the sibling's output.
+      (let ((a-pos (string-match "\e\\]133;A" output)))
+        (should a-pos)
+        (should-not (string-match-p "\e\\]133;C" (substring output a-pos)))))))
 
 (ert-deftest ghostel-test-zsh-osc7-wins-race-vs-precmd ()
   "Zsh `__ghostel_osc7' must run last among precmd_functions emitters.

@@ -503,5 +503,17 @@ runs are unaffected."
   "Run all ghostel tests for this platform."
   (ert-run-tests-batch-and-exit (ghostel-test--all-selector)))
 
+(defun ghostel-test--bash-at-least-p (major minor)
+  "Return non-nil when the bash in PATH is at least MAJOR.MINOR."
+  (let ((ver (with-temp-buffer
+               (call-process "bash" nil t nil "-c"
+                             "printf '%s.%s' \"$BASH_VERSINFO\" \"${BASH_VERSINFO[1]}\"")
+               (buffer-string))))
+    (and (string-match "\\`\\([0-9]+\\)\\.\\([0-9]+\\)\\'" ver)
+         (let ((got-major (string-to-number (match-string 1 ver)))
+               (got-minor (string-to-number (match-string 2 ver))))
+           (or (> got-major major)
+               (and (= got-major major) (>= got-minor minor)))))))
+
 (provide 'ghostel-test-helpers)
 ;;; ghostel-test-helpers.el ends here
