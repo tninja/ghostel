@@ -1,6 +1,7 @@
 .{
     .name = .ghostel,
     .version = "0.44.0",
+    .minimum_zig_version = "0.15.2",
     .paths = .{""},
     .fingerprint = 0x5a44bdd1198a0f4b,
     .dependencies = .{

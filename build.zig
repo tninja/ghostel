@@ -1,5 +1,13 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const module_version = @import("src/version.zig").version;
+
+// Keep in sync with build.zig.zon (minimum_zig_version) and the CI workflows.
+const required_zig = std.SemanticVersion{ .major = 0, .minor = 15, .patch = 2 };
+comptime {
+    if (builtin.zig_version.order(required_zig) != .eq)
+        @compileError("ghostel requires exactly Zig 0.15.2, found " ++ builtin.zig_version_string);
+}
 
 const vendored_emacs_module_dir = "vendor";
 
