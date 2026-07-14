@@ -5338,7 +5338,7 @@ Returns the buffer."
     (if others
         (pop-to-buffer (car others) (append display-buffer--same-window-action
                                             '((category . comint))))
-      (ghostel))))
+      (ghostel (and bufs t)))))
 
 (defun ghostel--all-buffers ()
   "Return all live `ghostel-mode' buffers, sorted alphabetically by name.

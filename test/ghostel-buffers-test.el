@@ -119,6 +119,49 @@ Each BINDING is (VAR NAME [DIR [IDENTITY]])."
   (should-error (ghostel-next) :type 'user-error)
   (should-error (ghostel-previous) :type 'user-error))
 
+(ert-deftest ghostel-test-other-switches-to-other-buffer ()
+  "`ghostel-other' pops to another ghostel buffer when one exists."
+  (ghostel-buffers-test--with-bufs ((a "*ghostel-a*")
+                                    (b "*ghostel-b*"))
+    (let (popped ghostel-called)
+      (cl-letf (((symbol-function 'pop-to-buffer)
+                 (lambda (buf &rest _) (setq popped buf)))
+                ((symbol-function 'ghostel)
+                 (lambda (&optional _) (setq ghostel-called t))))
+        (with-current-buffer a (ghostel-other))
+        (should (eq popped b))
+        (should-not ghostel-called)))))
+
+(ert-deftest ghostel-test-other-from-non-ghostel-buffer ()
+  "From a non-ghostel buffer, `ghostel-other' pops to an existing terminal."
+  (ghostel-buffers-test--with-bufs ((a "*ghostel-a*"))
+    (let ((other (generate-new-buffer "*scratch-y*")) popped)
+      (unwind-protect
+          (cl-letf (((symbol-function 'pop-to-buffer)
+                     (lambda (buf &rest _) (setq popped buf))))
+            (with-current-buffer other (ghostel-other))
+            (should (eq popped a)))
+        (kill-buffer other)))))
+
+(ert-deftest ghostel-test-other-sole-buffer-creates-fresh ()
+  "In the only ghostel buffer, `ghostel-other' forces a fresh terminal."
+  (ghostel-buffers-test--with-bufs ((a "*ghostel-a*"))
+    (let (ghostel-arg)
+      (cl-letf (((symbol-function 'ghostel)
+                 (lambda (&optional arg) (setq ghostel-arg arg))))
+        (with-current-buffer a (ghostel-other))
+        (should ghostel-arg)
+        (should-not (numberp ghostel-arg))))))
+
+(ert-deftest ghostel-test-other-no-buffers-creates-default ()
+  "With zero ghostel buffers, `ghostel-other' calls `ghostel' without arg."
+  (let ((called 'not-called))
+    (cl-letf (((symbol-function 'ghostel)
+               (lambda (&optional arg) (setq called arg))))
+      (ghostel-other))
+    (should-not called)
+    (should-not (eq called 'not-called))))
+
 (ert-deftest ghostel-test-list-buffers-predicate ()
   "`ghostel-list-buffers' offers only ghostel buffers to `read-buffer'."
   (ghostel-buffers-test--with-bufs ((a "*ghostel-a*")
